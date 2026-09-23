@@ -1,0 +1,175 @@
+import Foundation
+import Network
+
+public final class TrackHTTPServer: @unchecked Sendable {
+    public let host: String
+    public private(set) var port: UInt16 = 0
+    public let trackID: UUID
+    public let token: String
+    public let fileURL: URL
+    public let mimeType: String
+
+    private let queue = DispatchQueue(label: "HomeStereo.TrackHTTPServer")
+    private var listener: NWListener?
+
+    public init(fileURL: URL, host: String, trackID: UUID = UUID(), token: String = UUID().uuidString.replacingOccurrences(of: "-", with: "")) throws {
+        self.fileURL = fileURL.standardizedFileURL
+        self.host = host
+        self.trackID = trackID
+        self.token = token
+        self.mimeType = try AudioMIMEType.forFileURL(fileURL)
+    }
+
+    public var trackURL: URL {
+        TrackURLBuilder.url(host: host, port: port, trackID: trackID, token: token)
+    }
+
+    public func start(preferredPort: UInt16 = 8765, maximumAttempts: Int = 100) throws {
+        precondition(preferredPort != 8080, "TCP 8080 is reserved and must never be used.")
+        for offset in 0..<maximumAttempts {
+            let candidateValue = Int(preferredPort) + offset
+            guard candidateValue <= Int(UInt16.max), candidateValue != 8080,
+                  let candidate = NWEndpoint.Port(rawValue: UInt16(candidateValue)) else { continue }
+            let parameters = NWParameters.tcp
+            parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(host), port: candidate)
+            let candidateListener = try NWListener(using: parameters)
+            let semaphore = DispatchSemaphore(value: 0)
+            let readiness = ListenerReadiness()
+            candidateListener.stateUpdateHandler = { state in
+                switch state {
+                case .ready: readiness.markReady(); semaphore.signal()
+                case .failed: semaphore.signal()
+                default: break
+                }
+            }
+            candidateListener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+            candidateListener.start(queue: queue)
+            _ = semaphore.wait(timeout: .now() + 2)
+            guard readiness.isReady else {
+                candidateListener.cancel()
+                continue
+            }
+            listener = candidateListener
+            port = UInt16(candidateValue)
+            print("[DLNA] HTTP server listening on \(host):\(port)")
+            return
+        }
+        throw HomeStereoError.cannotBindPort(Int(preferredPort))
+    }
+
+    public func stop() {
+        listener?.cancel()
+        listener = nil
+    }
+
+    private func accept(_ connection: NWConnection) {
+        connection.stateUpdateHandler = { state in
+            if case let .failed(error) = state { print("[DLNA] HTTP connection failed: \(error)") }
+        }
+        connection.start(queue: queue)
+        receiveRequest(on: connection, accumulated: Data())
+    }
+
+    private func receiveRequest(on connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 32_768) { [weak self] data, _, complete, error in
+            guard let self else { connection.cancel(); return }
+            var requestData = accumulated
+            if let data { requestData.append(data) }
+            if requestData.range(of: Data("\r\n\r\n".utf8)) != nil {
+                self.handle(requestData, on: connection)
+            } else if complete || error != nil || requestData.count > 65_536 {
+                connection.cancel()
+            } else {
+                self.receiveRequest(on: connection, accumulated: requestData)
+            }
+        }
+    }
+
+    private func handle(_ data: Data, on connection: NWConnection) {
+        guard let request = String(data: data, encoding: .utf8) else {
+            sendSimple(status: "400 Bad Request", on: connection); return
+        }
+        let lines = request.components(separatedBy: "\r\n")
+        let requestParts = lines.first?.split(separator: " ") ?? []
+        guard requestParts.count >= 2 else { sendSimple(status: "400 Bad Request", on: connection); return }
+        let method = String(requestParts[0])
+        let target = String(requestParts[1])
+        let headers = lines.dropFirst().reduce(into: [String: String]()) { result, line in
+            guard let colon = line.firstIndex(of: ":") else { return }
+            result[String(line[..<colon]).lowercased()] = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+        }
+        let remote = connection.currentPath.map { String(describing: $0.remoteEndpoint) } ?? "unknown"
+        print("[DLNA] HTTP request from renderer \(remote): \(method) \(target)")
+        guard method == "GET" || method == "HEAD",
+              let components = URLComponents(string: "http://placeholder\(target)"),
+              components.path == "/tracks/\(trackID.uuidString.lowercased())",
+              components.queryItems?.first(where: { $0.name == "token" })?.value == token else {
+            sendSimple(status: "404 Not Found", on: connection); return
+        }
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            guard let sizeNumber = attributes[.size] as? NSNumber else { throw HomeStereoError.serverFailure("Missing file size") }
+            let size = sizeNumber.int64Value
+            let byteRange = try ByteRange.parse(headers["range"], fileSize: size)
+            if let byteRange { print("[DLNA] Range request: bytes=\(byteRange.lowerBound)-\(byteRange.upperBound)") }
+            let selected = byteRange ?? ByteRange(lowerBound: 0, upperBound: size - 1)
+            var responseHeaders = [
+                "HTTP/1.1 \(byteRange == nil ? "200 OK" : "206 Partial Content")",
+                "Content-Type: \(mimeType)",
+                "Content-Length: \(selected.length)",
+                "Accept-Ranges: bytes",
+                "Connection: close",
+            ]
+            if byteRange != nil { responseHeaders.append("Content-Range: bytes \(selected.lowerBound)-\(selected.upperBound)/\(size)") }
+            let headerData = Data((responseHeaders.joined(separator: "\r\n") + "\r\n\r\n").utf8)
+            connection.send(content: headerData, completion: .contentProcessed { [weak self] error in
+                guard error == nil, method == "GET", let self else { connection.cancel(); return }
+                self.sendFile(on: connection, range: selected)
+            })
+        } catch HomeStereoError.invalidRange {
+            sendSimple(status: "416 Range Not Satisfiable", on: connection)
+        } catch {
+            print("[DLNA] HTTP error: \(error)")
+            sendSimple(status: "500 Internal Server Error", on: connection)
+        }
+    }
+
+    private func sendFile(on connection: NWConnection, range: ByteRange) {
+        do {
+            let handle = try FileHandle(forReadingFrom: fileURL)
+            try handle.seek(toOffset: UInt64(range.lowerBound))
+            sendNextChunk(handle: handle, remaining: range.length, on: connection)
+        } catch {
+            print("[DLNA] File stream error: \(error)")
+            connection.cancel()
+        }
+    }
+
+    private func sendNextChunk(handle: FileHandle, remaining: Int64, on connection: NWConnection) {
+        guard remaining > 0 else { try? handle.close(); connection.cancel(); return }
+        do {
+            let data = try handle.read(upToCount: Int(min(remaining, 256 * 1024))) ?? Data()
+            guard !data.isEmpty else { try? handle.close(); connection.cancel(); return }
+            connection.send(content: data, completion: .contentProcessed { [weak self] error in
+                guard error == nil, let self else { try? handle.close(); connection.cancel(); return }
+                self.sendNextChunk(handle: handle, remaining: remaining - Int64(data.count), on: connection)
+            })
+        } catch {
+            try? handle.close()
+            connection.cancel()
+        }
+    }
+
+    private func sendSimple(status: String, on connection: NWConnection) {
+        let response = "HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+    }
+}
+
+private final class ListenerReadiness: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ready = false
+
+    var isReady: Bool { lock.withLock { ready } }
+    func markReady() { lock.withLock { ready = true } }
+}

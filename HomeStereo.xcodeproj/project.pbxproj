@@ -1,0 +1,210 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* Track.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* Track.swift */; };
+		A10000000000000000000002 /* Protocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* Protocols.swift */; };
+		A10000000000000000000003 /* PlaybackQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* PlaybackQueue.swift */; };
+		A10000000000000000000004 /* FolderAccessService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* FolderAccessService.swift */; };
+		A10000000000000000000005 /* LibraryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* LibraryService.swift */; };
+		A10000000000000000000006 /* AudioPlaybackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* AudioPlaybackService.swift */; };
+		A10000000000000000000007 /* PlaybackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* PlaybackStore.swift */; };
+		A10000000000000000000008 /* HomeStereoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* HomeStereoApp.swift */; };
+		A10000000000000000000009 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* ContentView.swift */; };
+		A1000000000000000000000A /* PlayerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* PlayerBar.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* Track.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Track.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* Protocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocols.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* PlaybackQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackQueue.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* FolderAccessService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderAccessService.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* LibraryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryService.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* AudioPlaybackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlaybackService.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* PlaybackStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStore.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* HomeStereoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeStereoApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000A /* PlayerBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerBar.swift; sourceTree = "<group>"; };
+		A2000000000000000000000B /* HomeStereoApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HomeStereoApp.entitlements; sourceTree = "<group>"; };
+		A2000000000000000000000C /* HomeStereo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HomeStereo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A30000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A40000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A40000000000000000000002 /* HomeStereoAppCore */,
+				A40000000000000000000003 /* HomeStereoApp */,
+				A2000000000000000000000B /* HomeStereoApp.entitlements */,
+				A40000000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A40000000000000000000002 /* HomeStereoAppCore */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* Track.swift */,
+				A20000000000000000000002 /* Protocols.swift */,
+				A20000000000000000000003 /* PlaybackQueue.swift */,
+				A20000000000000000000004 /* FolderAccessService.swift */,
+				A20000000000000000000005 /* LibraryService.swift */,
+				A20000000000000000000006 /* AudioPlaybackService.swift */,
+				A20000000000000000000007 /* PlaybackStore.swift */,
+			);
+			path = Sources/HomeStereoAppCore;
+			sourceTree = SOURCE_ROOT;
+		};
+		A40000000000000000000003 /* HomeStereoApp */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000008 /* HomeStereoApp.swift */,
+				A20000000000000000000009 /* ContentView.swift */,
+				A2000000000000000000000A /* PlayerBar.swift */,
+			);
+			path = Sources/HomeStereoApp;
+			sourceTree = SOURCE_ROOT;
+		};
+		A40000000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (A2000000000000000000000C /* HomeStereo.app */);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* HomeStereo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000002 /* Build configuration list for PBXNativeTarget "HomeStereo" */;
+			buildPhases = (
+				A70000000000000000000001 /* Sources */,
+				A30000000000000000000001 /* Frameworks */,
+				A70000000000000000000002 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = HomeStereo;
+			productName = HomeStereo;
+			productReference = A2000000000000000000000C /* HomeStereo.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A60000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = { A50000000000000000000001 = { CreatedOnToolsVersion = 26.6; }; };
+			};
+			buildConfigurationList = A80000000000000000000001 /* Build configuration list for PBXProject "HomeStereo" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = ja;
+			hasScannedForEncodings = 0;
+			knownRegions = (ja, Base);
+			mainGroup = A40000000000000000000001;
+			productRefGroup = A40000000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A50000000000000000000001 /* HomeStereo */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A70000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A70000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* Track.swift in Sources */,
+				A10000000000000000000002 /* Protocols.swift in Sources */,
+				A10000000000000000000003 /* PlaybackQueue.swift in Sources */,
+				A10000000000000000000004 /* FolderAccessService.swift in Sources */,
+				A10000000000000000000005 /* LibraryService.swift in Sources */,
+				A10000000000000000000006 /* AudioPlaybackService.swift in Sources */,
+				A10000000000000000000007 /* PlaybackStore.swift in Sources */,
+				A10000000000000000000008 /* HomeStereoApp.swift in Sources */,
+				A10000000000000000000009 /* ContentView.swift in Sources */,
+				A1000000000000000000000A /* PlayerBar.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A90000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 5.0; }; name = Debug; };
+		A90000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Release; };
+		A90000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HomeStereoApp.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = HomeStereo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = jp.local.HomeStereo.Beta;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		A90000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HomeStereoApp.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = HomeStereo;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = jp.local.HomeStereo.Beta;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A80000000000000000000001 /* Build configuration list for PBXProject "HomeStereo" */ = {isa = XCConfigurationList; buildConfigurations = (A90000000000000000000001 /* Debug */, A90000000000000000000002 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A80000000000000000000002 /* Build configuration list for PBXNativeTarget "HomeStereo" */ = {isa = XCConfigurationList; buildConfigurations = (A90000000000000000000003 /* Debug */, A90000000000000000000004 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = A60000000000000000000001 /* Project object */;
+}
