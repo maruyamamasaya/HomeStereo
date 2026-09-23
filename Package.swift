@@ -12,10 +12,10 @@ let package = Package(
         .executable(name: "HomeStereoApp", targets: ["HomeStereoApp"]),
     ],
     targets: [
-        .target(name: "HomeStereoKit"),
+        .target(name: "HomeStereoKit", exclude: ["AGENTS.md"]),
         .executableTarget(name: "HomeStereoCLI", dependencies: ["HomeStereoKit"]),
         .testTarget(name: "HomeStereoKitTests", dependencies: ["HomeStereoKit"]),
-        .target(name: "HomeStereoAppCore"),
+        .target(name: "HomeStereoAppCore", exclude: ["AGENTS.md"]),
         .executableTarget(name: "HomeStereoApp", dependencies: ["HomeStereoAppCore"]),
         .testTarget(name: "HomeStereoAppCoreTests", dependencies: ["HomeStereoAppCore"]),
     ]

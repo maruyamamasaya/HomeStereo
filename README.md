@@ -2,6 +2,17 @@
 
 Mac上のローカル音源を再生し、Apple標準の出力先選択UIからAirPlay対応機器を選ぶための、小さなネイティブmacOS技術検証です。既存のiPhoneアプリ「MyMusic」とは別製品であり、MyMusicのコード、Bundle Identifier、Store、データベース、永続化データには依存しません。
 
+## ドキュメント
+
+- [`CURRENT.md`](CURRENT.md): 現在地、実装済み／未実装、次の作業
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): 現在のシステム構成とデータフロー
+- [`CODEMAP.md`](CODEMAP.md): 機能から主要コード・検索語への索引
+- [`TESTING.md`](TESTING.md): 自動／手動検証と変更別の実行目安
+- [`OPERATIONS.md`](OPERATIONS.md): 起動、設定、実機運用、トラブル対応
+- [`AGENTS.md`](AGENTS.md): AIエージェント向け作業規約
+- [`decisions/`](decisions/README.md): 重要な設計判断
+- [`sessions/`](sessions/README.md): 短い作業履歴
+
 ## 動作環境と起動
 
 - macOS 14以降
@@ -11,17 +22,13 @@ Mac上のローカル音源を再生し、Apple標準の出力先選択UIからA
 
 `HomeStereo.xcodeproj`をXcodeで開き、`HomeStereo` schemeをMy Macで実行します。署名は`Sign to Run Locally`（ad-hoc）で動作し、無料のApple Developerアカウントも不要です。App Sandboxは有効で、User Selected FileはRead Onlyだけを許可しています。
 
-コマンドラインでの検証:
+コマンドラインでの標準検証:
 
 ```sh
-swift test
-xcodebuild -project HomeStereo.xcodeproj \
-  -scheme HomeStereo \
-  -configuration Debug \
-  -destination 'platform=macOS' \
-  -derivedDataPath /tmp/HomeStereoDerivedData \
-  build
+./scripts/verify.sh
 ```
+
+Fast/Fullの使い分けと個別commandは[`TESTING.md`](TESTING.md)を参照してください。
 
 ## MVPの使い方
 
