@@ -70,7 +70,7 @@ struct HomeStereoDLNAApp: App {
         MenuBarExtra {
             MenuBarPlaybackView(playback: store, queue: queue)
         } label: {
-            Label(queue.currentTrack?.title ?? "HomeStereo", systemImage: store.playbackState == .playing ? "speaker.wave.2.fill" : "speaker")
+            Label(queue.nowPlaying.title ?? "HomeStereo", systemImage: queue.nowPlaying.state == .playing ? "speaker.wave.2.fill" : "speaker")
         }
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -87,13 +87,15 @@ struct HomeStereoDLNAApp: App {
                 .keyboardShortcut("f", modifiers: .command)
             }
             CommandMenu("再生") {
-                Button(store.playbackState == .playing ? "一時停止" : "再生") { Task { await store.togglePlayback() } }
+                Button(queue.nowPlaying.state == .playing ? "一時停止" : "再生") { Task { await queue.togglePlayback() } }
                     .keyboardShortcut(.space, modifiers: [])
-                    .disabled(store.media == nil || store.selectedDevice?.supportsAVTransport != true)
+                    .disabled(!queue.nowPlaying.hasMedia || store.selectedDevice?.supportsAVTransport != true || store.isBusy)
                 Button("停止") { Task { await queue.stop() } }
                 Divider()
                 Button("前の曲") { Task { await queue.previous() } }
+                    .disabled(!queue.nowPlaying.isQueueTrack || store.isBusy)
                 Button("次の曲") { Task { await queue.next() } }
+                    .disabled(!queue.nowPlaying.isQueueTrack || store.isBusy)
             }
         }
     }
