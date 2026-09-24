@@ -48,6 +48,18 @@ Phase 3ではこの探索結果を全件保持し、UDNをrenderer IDとしてUI
 
 起動時にDIDL-Lite metadataと実際のHTTP URLを`SetAVTransportURI`へ渡し、その成功後に`Play`する。対話コマンドとして`Pause`、`Stop`、`Seek(REL_TIME)`、再`Play`、RenderingControlの`SetVolume(Master)`も利用できる。SOAPActionとservice typeは取得したService Descriptionを使う。
 
+## 長時間再生の安全策
+
+- 再生sessionごとのgeneration IDにより、前曲や切断前の遅延polling結果を反映しない。
+- `STOPPED`だけでは完走とせず、直前状態、同一URI、終端3秒以内の位置を合わせて1回だけ次曲へ進む。本体で途中停止した場合はQueueを進めない。
+- Play、Pause、Stop、Seekを直列化する。SetURIやPlayは自動再送せず、GetTransportInfo／GetPositionInfo／GetVolumeだけtimeout時に1回再試行する。
+- Rendererが別URIへ切り替わった場合はローカルNow Playingを無効化し、Queueを保持する。通信失敗時は状態をUNKNOWNにし、自動で次曲へ進めない。
+- 切替前のHTTP listenerは30秒のgrace period後に停止する。既存connectionのstreamを切らず、app終了時は全serverを停止する。
+- 再生中だけmacOSのidle sleepを抑止し、Pause、Stop、通信断、終了時に解除する。
+- UIから書き出す診断JSONはaction、成否、HTTP／UPnP codeに限定し、絶対path、IP、tokenを含めない。
+
+これらはfakeによる自動test済みである。SRS-HG1での50曲以上、各format、応答遅延、電源OFF／復帰は未実施であり、成功扱いにしない。
+
 ## Wireless Stereo
 
 現時点で2台はそれぞれRendererとして応答し、Friendly Name、UDN、IPが異なる。Wireless Stereo状態で代表Rendererがどちらか、両方が見え続けるか、Group／MultiChannel情報がどう変わるかは未確認である。本ツールは1台だけへURIを渡し、L/Rへ別々の音声を送らない。Wireless Stereoの前後で同じ診断を再実行し、IP、Friendly Name、UDN、Device Type、全Service、AVTransport URL、RenderingControl URLを比較する。

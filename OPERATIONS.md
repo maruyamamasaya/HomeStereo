@@ -1,45 +1,55 @@
 # Operations
 
-## Local Development
+## Run
 
-必要環境はmacOS 14以降とXcode。外部packageのinstallは不要。
+1. MacとWireless Stereo構成済みSRS-HG1を同じLANへ接続する。
+2. `HomeStereo.xcodeproj`を開き、`HomeStereo` scheme／My Macを実行する。
+3. ローカルネットワーク利用を許可し、「デバイス」で再検索する。
+4. Rendererを選び、「再生」で1ファイルを選ぶ。
 
-GUI App:
-
-1. `HomeStereo.xcodeproj`をXcodeで開く。
-2. `HomeStereo` schemeと`My Mac`を選ぶ。
-3. 実行後、`⌘O`または画面のbuttonから音楽folderを選ぶ。
-
-標準検証は`./scripts/verify.sh`を使う。DLNA CLIは次で起動する。
+環境変数、外部account、DB setupは不要。CLIは次で使える。
 
 ```sh
 swift run home-stereo --renderer <renderer-ipv4> --file '/absolute/path/to/audio-file'
 ```
 
-## Environment Variables
+## Sony Stereo Bridge PoC
 
-必須・任意ともに環境変数はない。renderer IPと音源pathはCLI optionで渡す。秘密情報を設定ファイルへ追加しない。
+読み取り専用の実機能力probe:
 
-## Database / Persistent Data
+```sh
+swift run sony-stereo-bridge probe --timeout 8 --output /tmp/sony-stereo-bridge-probe.json
+```
 
-DB setupは不要。Appは選択folderのsecurity-scoped bookmarkだけを`UserDefaults` key `musicFolderBookmark`へ保存する。音源をcopy、move、modifyしない。
+ステレオ音源を左右PCM WAVへ分離し、要求どおりHG1をLEFT、HG10をRIGHTとして再生する:
 
-## External Services / Network
+```sh
+./scripts/sony-stereo-bridge-split.sh '/absolute/path/to/input.flac' /tmp/sony-stereo-bridge
 
-Appのローカル再生に外部サービスは不要。AirPlay検証ではMacと対応受信機を同一networkへ接続し、受信機側のAirPlayを有効にする。
+swift run sony-stereo-bridge play-pair \
+  --left SRS-HG1 --left-file /tmp/sony-stereo-bridge/left.wav \
+  --right SRS-HG10 --right-file /tmp/sony-stereo-bridge/right.wav \
+  --left-delay 0 --right-delay 0 \
+  --timeout 8 --http-port 9876 --hold 600
+```
 
-DLNA CLIはLAN内rendererへSSDP/HTTP/SOAPで接続する。Mac側はrendererへ到達するIPv4 addressへbindし、TCP 8765から利用可能なportを探す。8080は使用しない。詳細は`docs/dlna-playback.md`を参照する。
+`--left-delay`と`--right-delay`は-5000〜5000ms。小さい側を基準に、相対差だけ大きい側のPlay送信を遅らせる。これは音響開始を保証せず、固定ファイル同期評価用である。
 
-## Build / Deploy
+## Permissions
 
-build/検証commandは`TESTING.md`を正本とする。現在はad-hocの`Sign to Run Locally`構成で、App Sandbox、Hardened Runtime、user-selected read-only entitlementが有効。
+- App Sandbox
+- User Selected File: Read Only
+- Outgoing Connections (Client)
+- Incoming Connections (Server)
+- `NSLocalNetworkUsageDescription`
 
-App Store/Developer ID配布、archive upload、notarization、自動deploy、CI/CDは設定されていない。
+HTTP serverはRendererへの経路上のLAN IPv4へbindし、8765から空きportを探す。8080、localhost、router port mappingは使わない。
 
 ## Troubleshooting
 
-- folderが復元できない: 移動・削除・権限変更を確認し、folderを再選択する。
-- 曲が出ない: 対応拡張子でもAVFoundationがcodec/DRM/破損を理由に除外し得る。
-- 再生できない: fileの存在と読み取り権限を確認する。
-- AirPlay機器が出ない: 同一network、受信機のAirPlay対応・有効状態、macOS標準UIでの可視性を確認する。推測でDLNA機能をAppへ追加しない。
-- DLNAが見つからない: IP、電源、同一LAN、multicast到達性を確認し、`[DLNA]` logと`docs/dlna-playback.md`を参照する。tokenやSOAP bodyを恒常的にlogへ追加しない。
+- 見つからない: 電源、NETWORK表示、同一SSID/LAN、AP isolation、VPN、multicast filteringを確認。
+- Description失敗: 一覧のLOCATIONへMacから到達可能か確認。
+- AVTransportなし: 診断を保存し、別方式へfallbackしない。
+- HTTP取得なし: macOS firewall、incoming entitlement、Mac/Renderer間の到達性を確認。
+- SOAP失敗: 画面のaction、HTTP status、UPnP code、descriptionを記録。
+- macOS GUIでL/R別Rendererのみ: GUIは個別同期再生を実装しない。独立PoCは`sony-stereo-bridge play-pair`を使う。

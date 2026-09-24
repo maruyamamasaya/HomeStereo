@@ -42,6 +42,46 @@ public enum SOAPRequestBuilder {
     }
 }
 
+public enum SOAPResponseParser {
+    public static func values(from data: Data) -> [String: String] {
+        let delegate = SOAPValueParserDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        guard parser.parse() else { return [:] }
+        return delegate.values
+    }
+
+    public static func fault(action: String, status: Int, data: Data) -> UPnPFailure {
+        let parsed = values(from: data)
+        return UPnPFailure(
+            action: action,
+            httpStatus: status,
+            errorCode: parsed["errorCode"].flatMap(Int.init),
+            errorDescription: parsed["errorDescription"]
+        )
+    }
+}
+
+private final class SOAPValueParserDelegate: NSObject, XMLParserDelegate {
+    var values: [String: String] = [:]
+    private var element = ""
+    private var text = ""
+
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+        element = elementName
+        text = ""
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) { text += string }
+
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.isEmpty { values[elementName] = value }
+        element = ""
+        text = ""
+    }
+}
+
 public actor UPnPController {
     private let session: URLSession
 
@@ -77,19 +117,82 @@ public actor UPnPController {
         ])
     }
 
-    private func invoke(service: UPnPService, action: String, arguments: [(String, String)]) async throws {
+    public func getTransportInfo(service: UPnPService) async throws -> TransportInfo {
+        let data = try await invoke(service: service, action: "GetTransportInfo", arguments: [("InstanceID", "0")], timeoutRetryCount: 1)
+        let values = SOAPResponseParser.values(from: data)
+        return TransportInfo(
+            state: values["CurrentTransportState"] ?? "UNKNOWN",
+            status: values["CurrentTransportStatus"] ?? "UNKNOWN",
+            speed: values["CurrentSpeed"] ?? ""
+        )
+    }
+
+    public func getPositionInfo(service: UPnPService) async throws -> PositionInfo {
+        let data = try await invoke(service: service, action: "GetPositionInfo", arguments: [("InstanceID", "0")], timeoutRetryCount: 1)
+        let values = SOAPResponseParser.values(from: data)
+        return PositionInfo(
+            duration: values["TrackDuration"].flatMap(UPnPTime.parse),
+            position: values["RelTime"].flatMap(UPnPTime.parse),
+            trackURI: values["TrackURI"]
+        )
+    }
+
+    public func getVolume(service: UPnPService) async throws -> UInt8 {
+        let data = try await invoke(service: service, action: "GetVolume", arguments: [
+            ("InstanceID", "0"), ("Channel", "Master"),
+        ], timeoutRetryCount: 1)
+        let values = SOAPResponseParser.values(from: data)
+        return UInt8(values["CurrentVolume"] ?? "") ?? 0
+    }
+
+    public func getProtocolInfo(service: UPnPService) async throws -> ProtocolInfo {
+        let data = try await invoke(
+            service: service,
+            action: "GetProtocolInfo",
+            arguments: [],
+            timeoutRetryCount: 1
+        )
+        let values = SOAPResponseParser.values(from: data)
+        return ProtocolInfo(
+            source: Self.protocolEntries(values["Source"]),
+            sink: Self.protocolEntries(values["Sink"])
+        )
+    }
+
+    private static func protocolEntries(_ value: String?) -> [String] {
+        value?.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty } ?? []
+    }
+
+    @discardableResult
+    private func invoke(
+        service: UPnPService,
+        action: String,
+        arguments: [(String, String)],
+        timeoutRetryCount: Int = 0
+    ) async throws -> Data {
         var request = URLRequest(url: service.controlURL)
         request.httpMethod = "POST"
-        request.timeoutInterval = 10
+        request.timeoutInterval = 5
         request.setValue("text/xml; charset=\"utf-8\"", forHTTPHeaderField: "Content-Type")
         request.setValue("\"\(service.serviceType)#\(action)\"", forHTTPHeaderField: "SOAPACTION")
         request.httpBody = SOAPRequestBuilder.envelope(serviceType: service.serviceType, action: action, arguments: arguments)
-        print("[DLNA] \(action) -> \(service.controlURL.absoluteString)")
-        let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        print("[DLNA] Renderer response: HTTP \(status)")
-        guard (200..<300).contains(status) else {
-            throw HomeStereoError.soapFailure(action: action, status: status, body: String(decoding: data, as: UTF8.self))
+        var attempt = 0
+        while true {
+            do {
+                print("[DLNA] SOAP \(action) started")
+                let (data, response) = try await session.data(for: request)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                print("[DLNA] SOAP \(action) completed: HTTP \(status)")
+                guard (200..<300).contains(status) else {
+                    throw HomeStereoError.upnpFailure(SOAPResponseParser.fault(action: action, status: status, data: data))
+                }
+                return data
+            } catch let error as URLError where error.code == .timedOut && attempt < timeoutRetryCount {
+                attempt += 1
+                try await Task.sleep(for: .milliseconds(200))
+            }
         }
     }
 }

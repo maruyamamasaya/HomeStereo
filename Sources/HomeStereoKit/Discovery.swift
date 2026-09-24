@@ -2,42 +2,74 @@ import Darwin
 import Foundation
 
 public enum SSDPDiscovery {
+    public static func discover(timeout: TimeInterval = 4) throws -> [SSDPResponse] {
+        try discover(searchTargets: ["urn:schemas-upnp-org:device:MediaRenderer:1", "ssdp:all"], timeout: timeout)
+    }
+
     public static func deviceDescriptionURL(rendererIP: String, timeout: TimeInterval = 4) throws -> URL {
-        print("[DLNA] SSDP discovery started for \(rendererIP)")
+        print("[DLNA] SSDP discovery started for selected renderer")
+        if let response = try discover(timeout: timeout).first(where: { $0.sourceAddress == rendererIP }) {
+            return response.location
+        }
+        throw HomeStereoError.noRendererFound(rendererIP)
+    }
+
+    public static func parseResponse(_ response: String, sourceAddress: String) -> SSDPResponse? {
+        let lines = response.components(separatedBy: "\r\n")
+        guard lines.first?.uppercased().hasPrefix("HTTP/1.1 200") == true else { return nil }
+        let headers = parseHeaders(response)
+        guard let locationValue = headers["location"],
+              let location = URL(string: locationValue),
+              let searchTarget = headers["st"] else { return nil }
+        return SSDPResponse(
+            usn: headers["usn"] ?? "",
+            location: location,
+            searchTarget: searchTarget,
+            server: headers["server"],
+            sourceAddress: sourceAddress
+        )
+    }
+
+    private static func discover(searchTargets: [String], timeout: TimeInterval) throws -> [SSDPResponse] {
         let descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
         guard descriptor >= 0 else { throw HomeStereoError.serverFailure(String(cString: strerror(errno))) }
         defer { close(descriptor) }
 
-        var receiveTimeout = timeval(tv_sec: Int(timeout), tv_usec: 0)
+        var receiveTimeout = timeval(tv_sec: 0, tv_usec: 250_000)
         setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, socklen_t(MemoryLayout<timeval>.size))
         var multicastTTL: UInt8 = 2
         setsockopt(descriptor, IPPROTO_IP, IP_MULTICAST_TTL, &multicastTTL, socklen_t(MemoryLayout<UInt8>.size))
 
-        let request = [
-            "M-SEARCH * HTTP/1.1",
-            "HOST: 239.255.255.250:1900",
-            "MAN: \"ssdp:discover\"",
-            "MX: 3",
-            "ST: urn:schemas-upnp-org:device:MediaRenderer:1",
-            "",
-            "",
-        ].joined(separator: "\r\n")
         var destination = sockaddr_in()
         destination.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         destination.sin_family = sa_family_t(AF_INET)
         destination.sin_port = in_port_t(1900).bigEndian
         inet_pton(AF_INET, "239.255.255.250", &destination.sin_addr)
-        let sent = request.withCString { bytes in
-            withUnsafePointer(to: &destination) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    sendto(descriptor, bytes, strlen(bytes), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        for searchTarget in searchTargets {
+            let request = [
+                "M-SEARCH * HTTP/1.1",
+                "HOST: 239.255.255.250:1900",
+                "MAN: \"ssdp:discover\"",
+                "MX: 2",
+                "ST: \(searchTarget)",
+                "",
+                "",
+            ].joined(separator: "\r\n")
+            let sent = request.withCString { bytes in
+                withUnsafePointer(to: &destination) {
+                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        sendto(descriptor, bytes, strlen(bytes), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
                 }
             }
+            guard sent >= 0 else { throw HomeStereoError.serverFailure(String(cString: strerror(errno))) }
         }
-        guard sent >= 0 else { throw HomeStereoError.serverFailure(String(cString: strerror(errno))) }
 
+        let deadline = Date().addingTimeInterval(timeout)
         var buffer = [UInt8](repeating: 0, count: 65_535)
-        while true {
+        var responses: [SSDPResponse] = []
+        var identifiers = Set<String>()
+        while Date() < deadline {
             var source = sockaddr_in()
             var sourceLength = socklen_t(MemoryLayout<sockaddr_in>.size)
             let count = withUnsafeMutablePointer(to: &source) { pointer in
@@ -46,22 +78,28 @@ public enum SSDPDiscovery {
                 }
             }
             if count < 0 {
-                if errno == EAGAIN || errno == EWOULDBLOCK { break }
+                if errno == EAGAIN || errno == EWOULDBLOCK { continue }
                 throw HomeStereoError.serverFailure(String(cString: strerror(errno)))
             }
             var addressBuffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
             var sourceAddress = source.sin_addr
             inet_ntop(AF_INET, &sourceAddress, &addressBuffer, socklen_t(INET_ADDRSTRLEN))
             let sourceIP = String(decoding: addressBuffer.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
-            guard sourceIP == rendererIP else { continue }
             let response = String(decoding: buffer.prefix(count), as: UTF8.self)
-            let headers = parseHeaders(response)
-            if let location = headers["location"], let url = URL(string: location) {
-                print("[DLNA] Device found: \(sourceIP), LOCATION=\(url.absoluteString)")
-                return url
-            }
+            guard let parsed = parseResponse(response, sourceAddress: sourceIP) else { continue }
+            let identifier = parsed.usn.isEmpty ? parsed.location.absoluteString : parsed.usn
+            guard identifiers.insert(identifier).inserted else { continue }
+            responses.append(parsed)
         }
-        throw HomeStereoError.noRendererFound(rendererIP)
+        return responses
+    }
+
+    public static func deduplicated(_ responses: [SSDPResponse]) -> [SSDPResponse] {
+        var identifiers = Set<String>()
+        return responses.filter {
+            let identifier = $0.usn.isEmpty ? $0.location.absoluteString : $0.usn
+            return identifiers.insert(identifier).inserted
+        }
     }
 
     private static func parseHeaders(_ response: String) -> [String: String] {
@@ -120,9 +158,7 @@ public enum DeviceDescriptionLoader {
             throw HomeStereoError.invalidDeviceDescription
         }
         let renderer = try DeviceDescriptionParser.parse(data: data, descriptionURL: url)
-        print("[DLNA] Device description loaded: \(renderer.friendlyName), \(renderer.modelName), \(renderer.udn)")
-        guard renderer.avTransport != nil else { throw HomeStereoError.missingAVTransport }
-        print("[DLNA] AVTransport found: \(renderer.avTransport!.controlURL.absoluteString)")
+        print("[DLNA] MediaRenderer description loaded; AVTransport=\(renderer.avTransport != nil)")
         return renderer
     }
 }

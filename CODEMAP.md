@@ -1,66 +1,96 @@
 # Code Map
 
-検索を開始するための索引であり、全ファイル一覧ではない。概念から候補を得た後、下記のsymbol/文字列でexact searchし、referenceとtestを確認する。
+## DLNA App UI
 
-## App UI and Composition
+Primary: `Sources/HomeStereoDLNAApp/`
+Keywords: `HomeStereoDLNAApp`, `DLNAContentView`, `DevicesView`, `PlaybackView`, `keyboardShortcut`
 
-Primary paths: `Sources/HomeStereoApp/`  
-Search keywords: `HomeStereoApp`, `ContentView`, `PlayerBar`, `AVRoutePickerView`, `keyboardShortcut`  
-Key entry points: `HomeStereoApp.body`, `ContentView.body`, `PlayerBar.body`  
-Related tests: UI testなし。state/behaviorは`Tests/HomeStereoAppCoreTests/`
+## State and Services
 
-## App State and Coordination
+Primary: `Sources/HomeStereoDLNAAppCore/`
+Keywords: `RendererPlaybackStore`, `RendererDiscovering`, `MediaServerCreating`, `RendererControlling`, `PlaybackDiagnostic`
+Tests: `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
-Primary paths: `Sources/HomeStereoAppCore/PlaybackStore.swift`, `Protocols.swift`, `Track.swift`  
-Search keywords: `PlaybackStore`, `restoreLibrary`, `chooseFolder`, `selectTrack`, `UserFacingError`  
-Key entry points: `PlaybackStore.init`, `restoreLibrary`, `selectTrack`  
-Related tests: `Tests/HomeStereoAppCoreTests/PlaybackStoreTests.swift`
+## Library Folder, Scan, and Persistence
 
-## Folder Access and Persistence
+Primary: `Sources/HomeStereoAppCore/Track.swift`, `FolderAccessService.swift`, `LibraryService.swift`, `LibraryRepository.swift`, `Sources/HomeStereoDLNAAppCore/LibraryStore.swift`
+Keywords: `LibraryFolder`, `ScanProgress`, `normalizedRelativePath`, `TrackIdentityResolver`, `fileResourceIdentifier`, `SQLiteLibraryRepository`, `prepareTrack`
+Tests: `Tests/HomeStereoAppCoreTests/LibraryPersistenceTests.swift`
 
-Primary paths: `Sources/HomeStereoAppCore/FolderAccessService.swift`, `HomeStereoApp.entitlements`  
-Search keywords: `musicFolderBookmark`, `bookmarkData`, `securityScoped`, `NSOpenPanel`, `user-selected.read-only`  
-Key entry points: `FolderAccessService.chooseFolder`, `saveBookmark`, `restoreFolder`  
-Related tests: `Tests/HomeStereoAppCoreTests/FolderAccessServiceTests.swift`
+## Library Browsing and Artwork
 
-## Library Scan and Metadata
+Primary: `Sources/HomeStereoAppCore/LibraryBrowser.swift`, `Sources/HomeStereoDLNAAppCore/ArtworkCache.swift`, `Sources/HomeStereoDLNAApp/LibraryViews.swift`
+Keywords: `LibraryBrowserIndex`, `LibraryAlbum.ID`, `LibraryArtist`, `LibrarySort`, `CachedArtwork`
+Tests: `Tests/HomeStereoAppCoreTests/LibraryBrowserTests.swift`
 
-Primary paths: `Sources/HomeStereoAppCore/LibraryService.swift`, `Track.swift`  
-Search keywords: `LibraryService`, `supportedExtensions`, `candidateURLs`, `AVURLAsset`, `commonMetadata`  
-Key entry points: `LibraryService.scan`, `LibraryService.supports`  
-Related tests: `Tests/HomeStereoAppCoreTests/LibraryServiceTests.swift`
+## Queue and Continuous Playback
 
-## Local Playback and Queue
+Primary: `Sources/HomeStereoAppCore/QueueModels.swift`, `Sources/HomeStereoDLNAAppCore/QueueStore.swift`, `RendererPlaybackStore.swift`, `Sources/HomeStereoDLNAApp/QueueView.swift`
+Keywords: `QueueSnapshot`, `playNow`, `playNext`, `advanceAfterCompletion`, `onTrackFinished`, `QueueRepeatMode`
+Tests: `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
-Primary paths: `Sources/HomeStereoAppCore/AudioPlaybackService.swift`, `PlaybackQueue.swift`  
-Search keywords: `AVQueuePlayer`, `AVPlayerItemDidPlayToEndTime`, `PlaybackQueue`, `routePickerPlayer`  
-Key entry points: `AudioPlaybackService.load`, `play`, `next`, `PlaybackQueue.moveNext`  
-Related tests: `AudioPlaybackServiceTests.swift`, `PlaybackQueueTests.swift` under `Tests/HomeStereoAppCoreTests/`
+## Playlists and M3U8
 
-## DLNA CLI Orchestration
+Primary: `Sources/HomeStereoAppCore/PlaylistModels.swift`, `Sources/HomeStereoDLNAAppCore/PlaylistStore.swift`, `Sources/HomeStereoDLNAApp/PlaylistsView.swift`
+Keywords: `Playlist`, `PlaylistItem`, `savePlaylist`, `parseM3U8`, `M3U8ImportResult`
+Tests: `Tests/HomeStereoAppCoreTests/PlaylistPersistenceTests.swift`, `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
-Primary paths: `Sources/HomeStereoCLI/main.swift`, `docs/dlna-playback.md`  
-Search keywords: `HomeStereoCommand`, `--renderer`, `--file`, `[DLNA]`, `SetAVTransportURI`  
-Key entry points: `HomeStereoCommand.main`, `Options.parse`  
-Related tests: orchestration/実機testなし。primitiveは`Tests/HomeStereoKitTests/`
+## Favorites and Playback History
 
-## DLNA Discovery and Device Description
+Primary: `Sources/HomeStereoAppCore/ListeningModels.swift`, `Sources/HomeStereoDLNAAppCore/ListeningStore.swift`, `Sources/HomeStereoDLNAApp/ListeningView.swift`
+Keywords: `Favorite`, `PlaybackEvent`, `playedSeconds`, `onTrackEnded`, `frequentTracks`
+Tests: `Tests/HomeStereoAppCoreTests/ListeningPersistenceTests.swift`
 
-Primary paths: `Sources/HomeStereoKit/Discovery.swift`, `DeviceDescriptionParser.swift`, `Models.swift`  
-Search keywords: `SSDPDiscovery`, `239.255.255.250`, `DeviceDescriptionLoader`, `MediaRenderer`, `AVTransport`  
-Key entry points: `SSDPDiscovery.deviceDescriptionURL`, `DeviceDescriptionLoader.load`, `DeviceDescriptionParser.parse`  
-Related tests: `parsesRendererDescriptionAndResolvesRelativeServiceURLs` in `Tests/HomeStereoKitTests/HomeStereoKitTests.swift`
+## macOS Playback Integration
 
-## DLNA HTTP and SOAP
+Primary: `Sources/HomeStereoDLNAAppCore/SystemPlaybackIntegration.swift`, `Sources/HomeStereoDLNAApp/MenuBarPlaybackView.swift`, `HomeStereoDLNAApp.swift`
+Keywords: `MPRemoteCommandCenter`, `MPNowPlayingInfoCenter`, `NowPlayingSnapshot`, `MenuBarExtra`
 
-Primary paths: `Sources/HomeStereoKit/TrackHTTPServer.swift`, `HTTPTypes.swift`, `SOAP.swift`  
-Search keywords: `/tracks/`, `TrackHTTPServer`, `ByteRange`, `AudioMIMEType`, `SOAPRequestBuilder`, `UPnPController`, `SOAPACTION`  
-Key entry points: `TrackHTTPServer.start`, `ByteRange.parse`, `SOAPRequestBuilder.envelope`, `UPnPController.setAVTransportURI`  
-Related tests: URL/MIME/range/SOAP tests in `Tests/HomeStereoKitTests/HomeStereoKitTests.swift`
+## Sleep, Network, and Recovery
 
-## Build and Configuration
+Primary: `Sources/HomeStereoDLNAAppCore/RecoveryStore.swift`, `Services.swift`, `RendererPlaybackStore.swift`
+Keywords: `MacSystemEventMonitor`, `SystemPlaybackEvent`, `ReconnectPolicy`, `prepareForSystemInterruption`, `reconnect`
 
-Primary paths: `Package.swift`, `HomeStereo.xcodeproj/project.pbxproj`, `HomeStereoApp.entitlements`, `scripts/verify.sh`  
-Search keywords: `executableTarget`, `PRODUCT_BUNDLE_IDENTIFIER`, `MACOSX_DEPLOYMENT_TARGET`, `CODE_SIGN`, `ENABLE_APP_SANDBOX`  
-Key entry points: SwiftPM target declarations、Xcode `HomeStereo` target、`./scripts/verify.sh`  
-Related tests: `swift test`とXcode Debug build。詳細は`TESTING.md`
+## Automatic Library Updates
+
+Primary: `Sources/HomeStereoDLNAAppCore/LibraryStore.swift`, `Services.swift`, `Sources/HomeStereoAppCore/LibraryService.swift`
+Keywords: `FolderChangeMonitor`, `folderDidChange`, `changeDebounce`, `scanGeneration`, `isStable`
+Tests: `Tests/HomeStereoDLNAAppCoreTests/LibraryAutoUpdateTests.swift`
+
+## JSON Backup Contract
+
+Primary: `Sources/HomeStereoAppCore/BackupContract.swift`, `Sources/HomeStereoDLNAAppCore/BackupStore.swift`, `Sources/HomeStereoDLNAApp/BackupView.swift`, `docs/json-backup.md`
+Keywords: `HomeStereoBackup`, `BackupCodec`, `BackupTrackMatcher`, `mergeBackup`, `BackupImportPreview`
+Tests: `Tests/HomeStereoAppCoreTests/BackupContractTests.swift`, `Tests/Fixtures/home-stereo-backup-v1.json`
+
+## Library Performance
+
+Primary: `Sources/HomeStereoAppCore/LibraryRepository.swift`, `LibraryService.swift`, `Sources/HomeStereoDLNAAppCore/LibraryStore.swift`, `ArtworkCache.swift`, `docs/performance.md`
+Keywords: `TrackFingerprint`, `displayLimit`, `scheduleBrowserRebuild`, `downsample`, `idx_tracks_artist`
+Tests: `Tests/HomeStereoAppCoreTests/LibraryPerformanceTests.swift`
+
+## Discovery and Description
+
+Primary: `Sources/HomeStereoKit/Discovery.swift`, `DeviceDescriptionParser.swift`, `ServiceDescription.swift`, `Models.swift`
+Keywords: `SSDPDiscovery.discover`, `parseResponse`, `DeviceDescriptionLoader`, `ServiceDescriptionLoader`, `connectionManager`, `presentationURL`
+
+## Sony Stereo Bridge PoC
+
+Primary: `Sources/SonyStereoBridgeCLI/main.swift`, `scripts/sony-stereo-bridge-split.sh`, `docs/sony-stereo-bridge/`
+Keywords: `sony-stereo-bridge`, `probe`, `play-one`, `play-pair`, `leftDelayMs`, `GetProtocolInfo`
+Tests: `Tests/HomeStereoKitTests/HomeStereoKitTests.swift`
+
+## HTTP Media Server
+
+Primary: `Sources/HomeStereoKit/TrackHTTPServer.swift`, `HTTPTypes.swift`
+Keywords: `TrackHTTPServer`, `MediaHTTPRequestHandler`, `ByteRange`, `TrackURLBuilder`, `AudioMIMEType`
+
+## SOAP Control
+
+Primary: `Sources/HomeStereoKit/SOAP.swift`
+Keywords: `UPnPController`, `SOAPRequestBuilder`, `SOAPResponseParser`, `GetTransportInfo`, `GetPositionInfo`, `GetVolume`, `GetProtocolInfo`
+
+## Build and Permissions
+
+Primary: `Package.swift`, `HomeStereo.xcodeproj/project.pbxproj`, `HomeStereoApp.entitlements`
+Keywords: `HomeStereoDLNAApp`, `network.client`, `network.server`, `NSLocalNetworkUsageDescription`

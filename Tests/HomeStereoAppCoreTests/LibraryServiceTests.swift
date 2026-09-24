@@ -11,6 +11,17 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertFalse(LibraryService.supports(URL(fileURLWithPath: "a.txt")))
     }
 
+    func testTrackCarriesArtworkData() {
+        let artwork = Data([0x01, 0x02, 0x03])
+        let track = Track(
+            url: URL(fileURLWithPath: "/tmp/artwork.m4a"),
+            title: "Artwork",
+            artworkData: artwork
+        )
+
+        XCTAssertEqual(track.artworkData, artwork)
+    }
+
     func testScanFindsPlayableAudioAndSkipsUnreadableCandidates() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -27,6 +38,37 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertEqual(tracks.first?.title, "tone")
         XCTAssertEqual(tracks.first?.url, playable)
         XCTAssertGreaterThan(tracks.first?.duration ?? 0, 0.9)
+    }
+
+    func testIdentityResolverRejectsSameSizeDifferentSongAndAmbiguousMetadata() {
+        let folder = UUID()
+        func track(id: UUID = UUID(), path: String, title: String, resource: Data? = nil) -> Track {
+            Track(
+                id: id, libraryFolderID: folder, relativePath: path,
+                url: URL(fileURLWithPath: "/tmp/\(path)"), fileSize: 10_000,
+                fileResourceIdentifier: resource, title: title, artist: "Artist", albumArtist: "Artist",
+                album: "Album", duration: 180, codec: "lpcm", sampleRate: 44_100,
+                bitDepth: 16, channelCount: 2
+            )
+        }
+
+        let candidate = track(path: "new.wav", title: "Song")
+        let different = track(path: "old.wav", title: "Different")
+        XCTAssertEqual(TrackIdentityResolver.match(candidate, among: [different]), .none)
+
+        let sameA = track(path: "a.wav", title: "Song")
+        let sameB = track(path: "b.wav", title: "Song")
+        XCTAssertEqual(
+            TrackIdentityResolver.match(candidate, among: [sameA, sameB]),
+            .ambiguous(candidateCount: 2, reason: .conservativeMetadata)
+        )
+
+        let resourceCandidate = track(path: "resource-new.wav", title: "Changed", resource: Data([1, 2, 3]))
+        let resourceExisting = track(path: "resource-old.wav", title: "Old", resource: Data([1, 2, 3]))
+        XCTAssertEqual(
+            TrackIdentityResolver.match(resourceCandidate, among: [resourceExisting]),
+            .matched(trackID: resourceExisting.id, reason: .fileResourceIdentifier)
+        )
     }
 
     private func makeSilentWAV(duration: Int) -> Data {

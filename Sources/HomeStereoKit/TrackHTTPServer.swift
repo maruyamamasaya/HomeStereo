@@ -51,7 +51,7 @@ public final class TrackHTTPServer: @unchecked Sendable {
             }
             listener = candidateListener
             port = UInt16(candidateValue)
-            print("[DLNA] HTTP server listening on \(host):\(port)")
+            print("[DLNA] HTTP media server ready")
             return
         }
         throw HomeStereoError.cannotBindPort(Int(preferredPort))
@@ -64,7 +64,7 @@ public final class TrackHTTPServer: @unchecked Sendable {
 
     private func accept(_ connection: NWConnection) {
         connection.stateUpdateHandler = { state in
-            if case let .failed(error) = state { print("[DLNA] HTTP connection failed: \(error)") }
+            if case .failed = state { print("[DLNA] HTTP connection failed") }
         }
         connection.start(queue: queue)
         receiveRequest(on: connection, accumulated: Data())
@@ -98,38 +98,36 @@ public final class TrackHTTPServer: @unchecked Sendable {
             guard let colon = line.firstIndex(of: ":") else { return }
             result[String(line[..<colon]).lowercased()] = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
         }
-        let remote = connection.currentPath.map { String(describing: $0.remoteEndpoint) } ?? "unknown"
-        print("[DLNA] HTTP request from renderer \(remote): \(method) \(target)")
-        guard method == "GET" || method == "HEAD",
-              let components = URLComponents(string: "http://placeholder\(target)"),
-              components.path == "/tracks/\(trackID.uuidString.lowercased())",
-              components.queryItems?.first(where: { $0.name == "token" })?.value == token else {
-            sendSimple(status: "404 Not Found", on: connection); return
-        }
+        print("[DLNA] HTTP request received: \(method)")
         do {
             let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
             guard let sizeNumber = attributes[.size] as? NSNumber else { throw HomeStereoError.serverFailure("Missing file size") }
             let size = sizeNumber.int64Value
-            let byteRange = try ByteRange.parse(headers["range"], fileSize: size)
-            if let byteRange { print("[DLNA] Range request: bytes=\(byteRange.lowerBound)-\(byteRange.upperBound)") }
-            let selected = byteRange ?? ByteRange(lowerBound: 0, upperBound: size - 1)
-            var responseHeaders = [
-                "HTTP/1.1 \(byteRange == nil ? "200 OK" : "206 Partial Content")",
-                "Content-Type: \(mimeType)",
-                "Content-Length: \(selected.length)",
-                "Accept-Ranges: bytes",
-                "Connection: close",
-            ]
-            if byteRange != nil { responseHeaders.append("Content-Range: bytes \(selected.lowerBound)-\(selected.upperBound)/\(size)") }
-            let headerData = Data((responseHeaders.joined(separator: "\r\n") + "\r\n\r\n").utf8)
+            let response = MediaHTTPRequestHandler.response(
+                method: method,
+                target: target,
+                headers: headers,
+                trackID: trackID,
+                token: token,
+                mimeType: mimeType,
+                fileSize: size
+            )
+            guard response.status == 200 || response.status == 206 else {
+                sendSimple(status: response.status == 416 ? "416 Range Not Satisfiable" : "404 Not Found", additionalHeaders: response.headers, on: connection)
+                return
+            }
+            if response.status == 206, let selected = response.bodyRange {
+                print("[DLNA] Range request: bytes=\(selected.lowerBound)-\(selected.upperBound)")
+            }
+            let statusText = response.status == 206 ? "206 Partial Content" : "200 OK"
+            let serializedHeaders = response.headers.map { "\($0.key): \($0.value)" }.sorted()
+            let headerData = Data((["HTTP/1.1 \(statusText)"] + serializedHeaders + ["Connection: close"]).joined(separator: "\r\n").appending("\r\n\r\n").utf8)
             connection.send(content: headerData, completion: .contentProcessed { [weak self] error in
-                guard error == nil, method == "GET", let self else { connection.cancel(); return }
+                guard error == nil, let selected = response.bodyRange, let self else { connection.cancel(); return }
                 self.sendFile(on: connection, range: selected)
             })
-        } catch HomeStereoError.invalidRange {
-            sendSimple(status: "416 Range Not Satisfiable", on: connection)
         } catch {
-            print("[DLNA] HTTP error: \(error)")
+            print("[DLNA] HTTP request failed")
             sendSimple(status: "500 Internal Server Error", on: connection)
         }
     }
@@ -140,7 +138,7 @@ public final class TrackHTTPServer: @unchecked Sendable {
             try handle.seek(toOffset: UInt64(range.lowerBound))
             sendNextChunk(handle: handle, remaining: range.length, on: connection)
         } catch {
-            print("[DLNA] File stream error: \(error)")
+            print("[DLNA] File stream failed")
             connection.cancel()
         }
     }
@@ -160,8 +158,10 @@ public final class TrackHTTPServer: @unchecked Sendable {
         }
     }
 
-    private func sendSimple(status: String, on connection: NWConnection) {
-        let response = "HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    private func sendSimple(status: String, additionalHeaders: [String: String] = [:], on connection: NWConnection) {
+        let headers = additionalHeaders.map { "\($0.key): \($0.value)" }.sorted().joined(separator: "\r\n")
+        let separator = headers.isEmpty ? "" : "\(headers)\r\n"
+        let response = "HTTP/1.1 \(status)\r\n\(separator)Content-Length: 0\r\nConnection: close\r\n\r\n"
         connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
     }
 }

@@ -2,83 +2,54 @@
 
 ## System Overview
 
-同一リポジトリに、現在のmacOS Appと旧DLNA CLIの2経路がある。両者はbuild targetと実行経路が分離され、Appは`HomeStereoKit`へ依存しない。
-
 ```text
-macOS App
-SwiftUI View -> PlaybackStore -> AppCore services -> File system / UserDefaults / AVFoundation
-                                                        |
-                                                        +-> AVRoutePickerView -> macOS output routing
-
-DLNA CLI (separate)
-CLI -> SSDP/device XML -> local HTTP track server -> renderer
-                       -> SOAP AVTransport ---------> renderer
+SwiftUI View
+  -> LibraryStore -> LibraryBrowserIndex / ArtworkCache
+                  -> FolderAccessService / LibraryService / SQLiteLibraryRepository
+  -> QueueStore -> SQLiteLibraryRepository
+  -> PlaylistStore -> SQLiteLibraryRepository / PlaylistFileService
+  -> ListeningStore -> QueueStore callbacks / SQLiteLibraryRepository
+  -> RecoveryStore -> MacSystemEventMonitor / RendererPlaybackStore
+  -> RendererPlaybackStore
+    -> RendererDiscoveryService -> SSDP M-SEARCH
+    -> DeviceDescriptionService -> URLSession / XMLParser
+    -> LocalMediaHTTPServerFactory -> Network.framework -> selected file
+    -> UPnPRendererController -> SOAP AVTransport / RenderingControl
+    -> MacPlaybackActivityManager -> idle sleep assertion
 ```
 
-## Technology Stack
+Rendererはtoken付きLAN URLから音源を取得し、Sony側がWireless StereoのL/Rへ振り分ける。MacからL/Rへ個別streamを送らない。
 
-- Swift 6 package manifest、macOS 14+
-- SwiftUI、Observation、AppKit
-- AVFoundation、AVKit
-- Foundation、Network、FoundationXML
-- XCTest（AppCore）とSwift Testing（Kit）
-- 外部package依存なし
+main Window、MenuBarExtra、小型player Window、Queue Inspectorは同じStore instanceを参照し、別の再生状態を持たない。window frameはAppKit autosave、SidebarはSceneStorage、InspectorはAppStorageで復元する。drag payloadはTrack UUIDだけを含み、音源pathやfile dataを渡さない。
 
-## Directory Structure
+## Targets
 
-```text
-Sources/HomeStereoApp/       macOS App entryとView
-Sources/HomeStereoAppCore/   状態、model、folder/library/playback service
-Sources/HomeStereoCLI/       DLNA検証CLI entry
-Sources/HomeStereoKit/       SSDP、XML、HTTP server、SOAP
-Tests/                       AppCore/Kitの自動テスト
-docs/                        DLNA実機検証資料
-decisions/                   設計判断
-sessions/                    AI作業記録
-scripts/                     標準検証入口
-```
+- `HomeStereoDLNAApp`: SwiftUI entry、NavigationSplitView、commands
+- `HomeStereoDLNAAppCore`: DLNA／Library observable Store、protocol、production service adapter
+- `HomeStereoAppCore`: Library model、folder access、AVFoundation scan、SQLite repository
+- `HomeStereoKit`: SSDP、Device XML、HTTP server、SOAP primitive
+- `HomeStereoCLI`: 既知IP向けの旧実機診断入口
+- `SonyStereoBridgeCLI`: MyMusic／macOS GUIから独立した2 Renderer固定WAV PoC。SSDP probe、SCPD action収集、ConnectionManager format収集、単一／左右別ファイル再生を担当する
 
-## Main Components
+旧ローカル再生UIは現行targetに含めない。`HomeStereoAppCore`のLibrary関連sourceだけを現行Appから再利用する。
 
-- `HomeStereoApp`: production serviceを組み立て、windowとcommandsを定義する。
-- `ContentView` / `PlayerBar`: 表示とユーザー操作。OS/APIの主要処理は直接持たない。
-- `PlaybackStore`: View向け状態とfolder scan/playback操作の調停点。
-- `FolderAccessService`: `NSOpenPanel`、security-scoped bookmark、UserDefaults境界。
-- `LibraryService`: ファイル列挙とAVFoundation metadata/readability判定。
-- `AudioPlaybackService`: `AVQueuePlayer`と`PlaybackQueue`を所有する。
-- `HomeStereoKit`: DLNA向け探索、XML parsing、track HTTP配信、SOAP操作。
+Sony Stereo Bridgeの段階構成とPhase gateは[`docs/sony-stereo-bridge/architecture.md`](docs/sony-stereo-bridge/architecture.md)を正本とする。現段階では固定ファイルだけで、ライブ入力とWeb UIは含めない。
 
-## Data Flow
+## Data and Security
 
-Appでは、folder選択またはbookmark復元後にscopeを開始し、`LibraryService`が`Track`を生成する。曲選択は`PlaybackStore`から`AudioPlaybackService`へqueue全体とindexを渡す。再生状態callbackがStoreを更新し、ViewへObservationで反映される。
+Library index、Queue snapshot（Track ID、順序、現在位置、repeat／shuffle）、Playlist（順序付きTrack ID参照）、Favorite、再生イベントをApplication SupportのSQLiteへ保存する。関連データは音源を複製せず、missing Track ID参照も保持する。選択ファイルはsecurity-scoped read-only accessで直接読む。HTTP URLはopaque UUIDとrandom tokenを使い、固定LAN addressだけへbindする。serverはファイル／Renderer変更とapp終了時に停止する。
 
-DLNA CLIでは、既知renderer IPからSSDPでDescription URLを得てXMLを解析する。Mac上の1ファイルをtoken付きURLでHTTP公開し、そのURLをSOAP `SetAVTransportURI`でrendererへ渡す。
+SQLite schema v6はTrackにmacOS file resource identifierのopaque bytesを任意保存する。scanのIdentity判定は同一folder内で、path完全一致、resource identifierの一意一致、file size・duration・音源仕様・metadataの保守的一意一致の順で行う。曖昧なら新規Trackとし、判定理由をscan noticeへ残す。path変更と既存Track IDの確定はscan成功後の単一transaction内で行い、Playlist、Favorite、履歴、Queueの参照は書き換えない。
 
-## API Structure
+## Protocols
 
-サーバー側Web APIはない。DLNA経路だけが次のネットワークprotocolを利用する。
+- SSDP: UDP multicast `239.255.255.250:1900`
+- Description: Renderer広告URLへのHTTP GET
+- Media: `GET|HEAD /tracks/<UUID>?token=<token>`、単一byte Range
+- Control: SOAP AVTransport／RenderingControl
 
-- SSDP M-SEARCH: UDP multicast `239.255.255.250:1900`
-- Device Description: rendererのHTTP URL
-- track配信: `GET|HEAD /tracks/<UUID>?token=<token>`、単一byte range対応
-- UPnP SOAP: rendererが広告したAVTransport/RenderingControl URL
+外部package依存はない。App Sandboxはfile read-only、network client/serverを許可する。
 
-## Database
+sleep／wakeとnetwork path通知は`SystemEventMonitoring`境界に隔離する。復帰時はQueueと履歴を保存したまま、network復帰後に有限の指数backoffでSSDP再検索し、UDNで同一Rendererを選んで実状態を取得する。自動再生・自動音量変更は行わない。
 
-DBはない。Appの唯一の永続データは、標準`UserDefaults`の`musicFolderBookmark`に保存するsecurity-scoped bookmarkである。音源自体はコピー・変更しない。
-
-## Authentication
-
-ユーザー認証はない。ローカルHTTP track URLはランダムtokenで限定されるが、アカウント認証機構ではない。
-
-## External Services
-
-クラウドサービスや第三者SDKはない。外部接点はApple framework、ローカルファイルシステム、ユーザーが選ぶ音声出力先、DLNA CLI利用時のLAN内rendererのみ。
-
-## Deployment
-
-Appは`HomeStereo.xcodeproj`の`HomeStereo` schemeでbuildする。Bundle IDは`jp.local.HomeStereo.Beta`、versionは0.1、ad-hoc署名、Hardened RuntimeとApp Sandboxが有効。配布・notarization・CI設定はない。Swift Packageはlibrary、CLI、App executableとtest targetを定義する。
-
-## Important Dependencies
-
-外部依存はない。特に重要な境界は`AudioPlaybackServicing`、`LibraryScanning`、`FolderAccessServicing`、`BookmarkStoring`で、AppCore testはfake/in-memory実装へ差し替える。
+各ローカル再生sessionはgeneration IDを持つ。pollingはawait境界ごとにgenerationを確認し、前曲の遅延応答を破棄する。完走は同一URI、直前の再生状態、終端近傍の位置を合わせて1回だけ確定する。操作commandは直列化し、状態取得SOAPだけtimeout時に1回再試行する。診断Exportはaction、結果、HTTP／UPnP codeだけを保持し、音源path、機器IP、tokenを含めない。

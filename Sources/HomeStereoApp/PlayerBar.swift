@@ -10,6 +10,8 @@ struct PlayerBar: View {
 
     var body: some View {
         HStack(spacing: 14) {
+            ArtworkView(data: store.currentTrack?.artworkData, size: 52, cornerRadius: 8)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(store.currentTrack?.title ?? "再生する曲を選択")
                     .font(.headline)
@@ -19,7 +21,7 @@ struct PlayerBar: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .frame(width: 190, alignment: .leading)
+            .frame(width: 170, alignment: .leading)
 
             Button(action: store.previous) { Image(systemName: "backward.fill") }
                 .disabled(store.currentTrack == nil)

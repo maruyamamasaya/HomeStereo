@@ -56,7 +56,14 @@ private struct SongsView: View {
                 }
             } else {
                 Table(store.tracks, selection: $store.selectedTrackID) {
-                    TableColumn("曲名", value: \.title)
+                    TableColumn("曲名") { track in
+                        HStack(spacing: 10) {
+                            ArtworkView(data: track.artworkData, size: 34, cornerRadius: 5)
+                            Text(track.title)
+                                .lineLimit(1)
+                        }
+                    }
+                    .width(min: 210, ideal: 300)
                     TableColumn("アーティスト") { Text($0.artist ?? "—") }
                     TableColumn("アルバム") { Text($0.album ?? "—") }
                     TableColumn("時間") { Text(formatTime($0.duration)) }

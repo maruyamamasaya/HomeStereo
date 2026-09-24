@@ -35,31 +35,45 @@ public final class FolderAccessService: FolderAccessServicing {
     }
 
     public func saveBookmark(for folder: URL) throws {
-        let data = try folder.bookmarkData(
+        try bookmarks.save(makeBookmark(for: folder))
+    }
+
+    public func makeBookmark(for folder: URL) throws -> Data {
+        try folder.bookmarkData(
             options: .withSecurityScope,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
-        try bookmarks.save(data)
     }
 
-    public func restoreFolder() throws -> URL? {
-        guard let data = try bookmarks.load() else { return nil }
+    public func resolveBookmark(_ data: Data) throws -> BookmarkResolution {
         var isStale = false
-        let url: URL
         do {
-            url = try URL(
+            let url = try URL(
                 resolvingBookmarkData: data,
                 options: [.withSecurityScope, .withoutUI],
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             )
+            return BookmarkResolution(
+                url: url,
+                refreshedBookmark: isStale ? try makeBookmark(for: url) : nil
+            )
+        } catch {
+            throw UserFacingError.folderAccessLost
+        }
+    }
+
+    public func restoreFolder() throws -> URL? {
+        guard let data = try bookmarks.load() else { return nil }
+        do {
+            let resolution = try resolveBookmark(data)
+            if let refreshed = resolution.refreshedBookmark { try bookmarks.save(refreshed) }
+            return resolution.url
         } catch {
             try? bookmarks.remove()
             throw UserFacingError.folderAccessLost
         }
-        if isStale { try saveBookmark(for: url) }
-        return url
     }
 
     public func beginAccessing(_ folder: URL) -> Bool {

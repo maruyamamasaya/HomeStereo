@@ -8,15 +8,23 @@ let package = Package(
     products: [
         .library(name: "HomeStereoKit", targets: ["HomeStereoKit"]),
         .executable(name: "home-stereo", targets: ["HomeStereoCLI"]),
+        .executable(name: "sony-stereo-bridge", targets: ["SonyStereoBridgeCLI"]),
         .library(name: "HomeStereoAppCore", targets: ["HomeStereoAppCore"]),
-        .executable(name: "HomeStereoApp", targets: ["HomeStereoApp"]),
+        .executable(name: "HomeStereoApp", targets: ["HomeStereoDLNAApp"]),
     ],
     targets: [
         .target(name: "HomeStereoKit", exclude: ["AGENTS.md"]),
         .executableTarget(name: "HomeStereoCLI", dependencies: ["HomeStereoKit"]),
+        .executableTarget(name: "SonyStereoBridgeCLI", dependencies: ["HomeStereoKit"]),
         .testTarget(name: "HomeStereoKitTests", dependencies: ["HomeStereoKit"]),
-        .target(name: "HomeStereoAppCore", exclude: ["AGENTS.md"]),
-        .executableTarget(name: "HomeStereoApp", dependencies: ["HomeStereoAppCore"]),
+        .target(
+            name: "HomeStereoAppCore",
+            exclude: ["AGENTS.md"],
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
+        .target(name: "HomeStereoDLNAAppCore", dependencies: ["HomeStereoKit", "HomeStereoAppCore"]),
+        .executableTarget(name: "HomeStereoDLNAApp", dependencies: ["HomeStereoDLNAAppCore", "HomeStereoKit", "HomeStereoAppCore"]),
         .testTarget(name: "HomeStereoAppCoreTests", dependencies: ["HomeStereoAppCore"]),
+        .testTarget(name: "HomeStereoDLNAAppCoreTests", dependencies: ["HomeStereoDLNAAppCore", "HomeStereoKit", "HomeStereoAppCore"]),
     ]
 )

@@ -30,6 +30,7 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
     private var modelName = ""
     private var modelNumber: String?
     private var udn = ""
+    private var presentationURL: URL?
     private var currentService: ServiceFields?
     private var services: [UPnPService] = []
 
@@ -45,6 +46,7 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             modelName: modelName,
             modelNumber: modelNumber,
             udn: udn,
+            presentationURL: presentationURL,
             services: services
         )
     }
@@ -89,6 +91,7 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             case "modelName": modelName = value
             case "modelNumber": modelNumber = value.isEmpty ? nil : value
             case "UDN": udn = value
+            case "presentationURL": presentationURL = URL(string: value, relativeTo: baseURL)?.absoluteURL
             default: break
             }
         }
