@@ -7,6 +7,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "HomeStereoKit", targets: ["HomeStereoKit"]),
+        .library(name: "SonyStereoBridgeAudio", targets: ["SonyStereoBridgeAudio"]),
         .executable(name: "home-stereo", targets: ["HomeStereoCLI"]),
         .executable(name: "sony-stereo-bridge", targets: ["SonyStereoBridgeCLI"]),
         .library(name: "HomeStereoAppCore", targets: ["HomeStereoAppCore"]),
@@ -15,7 +16,9 @@ let package = Package(
     targets: [
         .target(name: "HomeStereoKit", exclude: ["AGENTS.md"]),
         .executableTarget(name: "HomeStereoCLI", dependencies: ["HomeStereoKit"]),
-        .executableTarget(name: "SonyStereoBridgeCLI", dependencies: ["HomeStereoKit"]),
+        .target(name: "SonyStereoBridgeAudio"),
+        .executableTarget(name: "SonyStereoBridgeCLI", dependencies: ["HomeStereoKit", "SonyStereoBridgeAudio"]),
+        .testTarget(name: "SonyStereoBridgeAudioTests", dependencies: ["SonyStereoBridgeAudio"]),
         .testTarget(name: "HomeStereoKitTests", dependencies: ["HomeStereoKit"]),
         .target(
             name: "HomeStereoAppCore",

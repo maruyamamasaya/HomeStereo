@@ -118,7 +118,7 @@ public actor UPnPController {
     }
 
     public func getTransportInfo(service: UPnPService) async throws -> TransportInfo {
-        let data = try await invoke(service: service, action: "GetTransportInfo", arguments: [("InstanceID", "0")], timeoutRetryCount: 1)
+        let data = try await invoke(service: service, action: "GetTransportInfo", arguments: [("InstanceID", "0")], readRetryCount: 2)
         let values = SOAPResponseParser.values(from: data)
         return TransportInfo(
             state: values["CurrentTransportState"] ?? "UNKNOWN",
@@ -128,7 +128,7 @@ public actor UPnPController {
     }
 
     public func getPositionInfo(service: UPnPService) async throws -> PositionInfo {
-        let data = try await invoke(service: service, action: "GetPositionInfo", arguments: [("InstanceID", "0")], timeoutRetryCount: 1)
+        let data = try await invoke(service: service, action: "GetPositionInfo", arguments: [("InstanceID", "0")], readRetryCount: 2)
         let values = SOAPResponseParser.values(from: data)
         return PositionInfo(
             duration: values["TrackDuration"].flatMap(UPnPTime.parse),
@@ -140,7 +140,7 @@ public actor UPnPController {
     public func getVolume(service: UPnPService) async throws -> UInt8 {
         let data = try await invoke(service: service, action: "GetVolume", arguments: [
             ("InstanceID", "0"), ("Channel", "Master"),
-        ], timeoutRetryCount: 1)
+        ], readRetryCount: 2)
         let values = SOAPResponseParser.values(from: data)
         return UInt8(values["CurrentVolume"] ?? "") ?? 0
     }
@@ -150,7 +150,7 @@ public actor UPnPController {
             service: service,
             action: "GetProtocolInfo",
             arguments: [],
-            timeoutRetryCount: 1
+            readRetryCount: 2
         )
         let values = SOAPResponseParser.values(from: data)
         return ProtocolInfo(
@@ -170,7 +170,7 @@ public actor UPnPController {
         service: UPnPService,
         action: String,
         arguments: [(String, String)],
-        timeoutRetryCount: Int = 0
+        readRetryCount: Int = 0
     ) async throws -> Data {
         var request = URLRequest(url: service.controlURL)
         request.httpMethod = "POST"
@@ -189,10 +189,21 @@ public actor UPnPController {
                     throw HomeStereoError.upnpFailure(SOAPResponseParser.fault(action: action, status: status, data: data))
                 }
                 return data
-            } catch let error as URLError where error.code == .timedOut && attempt < timeoutRetryCount {
+            } catch let error as URLError
+                where Self.isTransientReadError(error.code) && attempt < readRetryCount {
                 attempt += 1
-                try await Task.sleep(for: .milliseconds(200))
+                try await Task.sleep(for: .milliseconds(150 * attempt))
             }
+        }
+    }
+
+    private static func isTransientReadError(_ code: URLError.Code) -> Bool {
+        switch code {
+        case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+             .dnsLookupFailed, .notConnectedToInternet, .resourceUnavailable:
+            true
+        default:
+            false
         }
     }
 }

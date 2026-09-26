@@ -1,6 +1,6 @@
 # HomeStereo DLNA macOS Beta
 
-Sony h.ear go（SRS-HG1）2台のWireless Stereo構成へ、Mac上で選択した1音源をDLNA／UPnP経由で再生するネイティブmacOS技術検証です。アプリはDLNAサーバー兼コントローラーとして動き、RendererがMacからHTTP取得します。L/Rへ個別送信せず、AirPlay、`AVRoutePickerView`、Macローカル音声出力、トランスコードは使いません。
+Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で再生するネイティブmacOS技術検証です。単体出力に加え、L soundbar（SRS-HG10）をLEFT、R soundbar（SRS-HG1）をRIGHTとして選ぶSonyステレオ出力を備えます。ステレオ時はアプリが曲を左右のPCM WAVへ分離し、2台がMacから個別にHTTP取得します。AirPlay、`AVRoutePickerView`、Macローカル音声出力は使いません。
 
 既存iPhoneアプリ「MyMusic」とは別製品で、コード、Bundle Identifier、DB、永続化データ、Cloudに依存しません。
 
@@ -23,10 +23,11 @@ Sony h.ear go（SRS-HG1）2台のWireless Stereo構成へ、Mac上で選択し�
 ## 使い方
 
 1. SRS-HG1側でWi-FiとWireless StereoのL/R構成を完了し、Macを同じLANへ接続します。
-2. アプリの「スピーカー」で再検索し、Rendererを選択します。
-3. Device Description診断で`AVTransport`、`RenderingControl`、`ConnectionManager`を確認します。
-4. 「フォルダ」で音楽フォルダを登録してscanするか、「再生中」で音源を1つ選択します。
-5. 「ライブラリ」で曲を選び、再生を押します。`⌘O`でフォルダ登録、`⇧⌘O`で単曲選択、`⌘F`で検索、Spaceで再生／一時停止できます。
+2. アプリの「スピーカー」で再検索し、単体Rendererまたは「Sonyステレオ」を選択します。
+3. Sonyステレオでは下部バーの「遅延チェック」を押し、3連クリックが中央で締まった1音に聞こえるか確認します。二重打ちや左右への広がりがあれば、停止後に「スピーカー」の遅延値／遅らせる側を調整して再確認します。
+4. Device Description診断で`AVTransport`、`RenderingControl`、`ConnectionManager`を確認します。
+5. 「フォルダ」で音楽フォルダを登録してscanするか、「再生中」で音源を1つ選択します。
+6. 「ライブラリ」で曲を選び、再生を押します。`⌘O`でフォルダ登録、`⇧⌘O`で単曲選択、`⌘F`で検索、Spaceで再生／一時停止できます。
 
 再生時だけ、Rendererへ到達するMacのLANアドレスへ小さなHTTP serverをbindします。URLはopaque UUIDと一時tokenを含み、選択した1ファイルだけを`GET`／`HEAD`／byte Rangeで配信します。ファイル変更、Renderer変更、window終了で旧serverとURLを無効化します。
 
@@ -53,6 +54,14 @@ Sony h.ear go（SRS-HG1）2台のWireless Stereo構成へ、Mac上で選択し�
 - 実再生時間、完走／途中停止をTrack IDで保持する再生履歴、最近／頻繁／未再生一覧
 - media key／MPRemoteCommandCenterによる既存Queue操作、Now Playing同期
 - 現在曲と基本操作、メイン画面表示を備えたMenuBarExtra
+- スピーカー選択→曲選択→再生を案内する初回導線と、無効な再生操作の理由表示
+- Queue曲と直接選択ファイルで共通のNow Playing状態（曲なし／読込中／停止中／再生中／一時停止／通信不明）
+- 行内再生と選択曲操作を備えた曲一覧、Artworkグリッドのアルバム／アーティスト一覧と詳細ヘッダー
+- Artwork、再生状態、空状態を揃えたお気に入り／最近再生／よく聴く／未再生画面
+- 曲順編集と「次に再生」へ集中した再生キュー、代表Artworkと概要を備えたプレイリスト
+- 下部プレイヤーと再生中画面から操作できるShuffle／Repeat
+- Sonyステレオの既定出力を48kHz／16-bit PCMへ統一し、現在の遅延設定を通した16秒の3連クリック同期チェックを下部プレイヤーから実行
+- Artworkと再生操作を中心にした再生中画面、利用者向け表示と技術情報を分離したスピーカー画面
 - sleep／wake・Wi-Fi切断検知、UDNによるRenderer再発見、有限の指数backoff
 - 復帰後のTransport／Position／Volume同期と、明示確認後だけ行う再開
 - 登録folderのFSEvents監視、通知debounce、未変更metadataを読まない自動差分scan
@@ -67,7 +76,7 @@ Sony h.ear go（SRS-HG1）2台のWireless Stereo構成へ、Mac上で選択し�
 - 開閉と状態復元が可能なQueue Inspector、Artwork付き小型プレイヤーWindow
 - window size／Sidebar状態復元、VoiceOver label、system文字サイズ／contrast／Reduce Motion準拠
 - DeleteはQueue／Playlist参照だけを対象とし、folder解除やresetを含むdestructive操作は確認後に実行
-- rename／同一folder内移動／missing復帰で参照を保つ保守的Track Identity（SQLite schema v6）
+- rename／同一folder内移動／missing復帰で参照を保つ保守的Track Identity（SQLite schema v8）
 
 View → `RendererPlaybackStore` → protocol化したService → `HomeStereoKit`／Network.frameworkの方向です。主要コードは`Sources/HomeStereoDLNAApp`、`Sources/HomeStereoDLNAAppCore`、`Sources/HomeStereoKit`にあります。
 
@@ -92,9 +101,9 @@ JSON Backupの正式なschema、完全なsample、migration方針は[`docs/json-
 
 ## Sony Stereo Bridge PoC
 
-SRS-HG1とSRS-HG10を別Rendererとして固定L/R WAV再生する独立CLIを追加しています。MyMusicとmacOS GUIには統合していません。2026-09-24時点でUPnP能力probe、HG1単体WAV、2台別WAVのHTTP取得とTransport進行まで実機成功しています。音響同期と10分driftは未評価のため、Audio Hijack／BlackHole／ライブ配信／Web UIはまだ実装していません。
+SRS-HG1とSRS-HG10を別Rendererとして扱う独立CLIもあります。UPnP能力probe、固定L/R WAV、極小click、BlackHole 2ch captureとsegment送信の診断に使用します。通常曲のSonyステレオ再生はmacOS GUIへ統合済みです。音響開始差と長時間driftは未評価です。
 
-入口と現在の判定は[`docs/sony-stereo-bridge/architecture.md`](docs/sony-stereo-bridge/architecture.md)、実機能力は[`docs/sony-stereo-bridge/sony-upnp-research.md`](docs/sony-stereo-bridge/sony-upnp-research.md)、同期手順は[`docs/sony-stereo-bridge/synchronization.md`](docs/sony-stereo-bridge/synchronization.md)を参照してください。
+入口と現在の判定は[`docs/sony-stereo-bridge/architecture.md`](docs/sony-stereo-bridge/architecture.md)、実装経緯と未解決課題は[`docs/sony-stereo-bridge/status-and-history.md`](docs/sony-stereo-bridge/status-and-history.md)、実機能力は[`docs/sony-stereo-bridge/sony-upnp-research.md`](docs/sony-stereo-bridge/sony-upnp-research.md)、同期手順は[`docs/sony-stereo-bridge/synchronization.md`](docs/sony-stereo-bridge/synchronization.md)を参照してください。
 
 ## 実機確認
 

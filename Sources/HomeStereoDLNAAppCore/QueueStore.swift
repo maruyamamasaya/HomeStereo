@@ -11,13 +11,12 @@ public final class QueueStore {
     public private(set) var errorMessage: String?
     public private(set) var isTransitioning = false
     public var selectedItemIDs = Set<QueueItem.ID>()
-    @ObservationIgnored public var onTrackStarted: (@MainActor (Track.ID) -> Void)?
+    @ObservationIgnored public var onTrackStarted: (@MainActor (
+        Track.ID, TimeInterval, MyMusicPlaySource, MyMusicSelectionType
+    ) -> Void)?
     @ObservationIgnored public var onTrackPosition: (@MainActor (TimeInterval) -> Void)?
-    @ObservationIgnored public var onTrackEnded: (@MainActor (Bool) -> Void)?
+    @ObservationIgnored public var onTrackEnded: (@MainActor (MyMusicPlaybackEndReason) -> Void)?
     @ObservationIgnored public var onPlaybackStateChange: (@MainActor (RendererPlaybackState) -> Void)?
-    @ObservationIgnored public var onNowPlayingTrack: (@MainActor (Track?) -> Void)?
-    @ObservationIgnored public var onNowPlayingPosition: (@MainActor (TimeInterval) -> Void)?
-    @ObservationIgnored public var onNowPlayingState: (@MainActor (RendererPlaybackState) -> Void)?
     @ObservationIgnored public var onNowPlayingChange: (@MainActor (NowPlayingPresentation) -> Void)?
 
     @ObservationIgnored private let repository: any LibraryPersisting
@@ -25,6 +24,8 @@ public final class QueueStore {
     @ObservationIgnored private let playback: RendererPlaybackStore
     @ObservationIgnored private var positionSaveTask: Task<Void, Never>?
     @ObservationIgnored private var currentWasRemoved = false
+    @ObservationIgnored private var currentPlaySource: MyMusicPlaySource = .unknown
+    @ObservationIgnored private var nextSelectionType: MyMusicSelectionType = .manual
 
     public var items: [QueueItem] { snapshot.items }
     public var currentIndex: Int? { snapshot.currentIndex }
@@ -36,11 +37,32 @@ public final class QueueStore {
     }
 
     public var nowPlayingTrack: Track? {
+        guard !playback.isStereoSynchronizationCheckActive else { return nil }
         guard let id = playback.selectedLibraryTrackID else { return nil }
         return library.tracks.first { $0.id == id }
     }
 
     public var nowPlaying: NowPlayingPresentation {
+        if playback.isStereoSynchronizationCheckActive {
+            let state: NowPlayingDisplayState
+            if playback.isBusy { state = .loading }
+            else {
+                switch playback.playbackState {
+                case .stopped: state = .stopped
+                case .playing: state = .playing
+                case .paused: state = .paused
+                case .transitioning: state = .loading
+                case .unknown: state = .unknown
+                }
+            }
+            return NowPlayingPresentation(
+                title: "同期チェック音",
+                artist: "3回のクリックが中央で1音に聞こえるか確認",
+                duration: playback.duration,
+                elapsed: playback.elapsed,
+                state: state
+            )
+        }
         guard let media = playback.media else {
             let state: NowPlayingDisplayState = playback.playbackState == .stopped ? .empty : .unknown
             return NowPlayingPresentation(state: state)
@@ -58,7 +80,7 @@ public final class QueueStore {
             }
         }
         return NowPlayingPresentation(
-            trackID: track?.id,
+            trackID: playback.selectedLibraryTrackID,
             title: track?.title ?? media.title,
             artist: track?.artist,
             album: track?.album,
@@ -71,33 +93,30 @@ public final class QueueStore {
     public init(repository: any LibraryPersisting, library: LibraryStore, playback: RendererPlaybackStore) {
         self.repository = repository; self.library = library; self.playback = playback
         playback.onTrackFinished = { [weak self] in
-            self?.onTrackEnded?(true)
+            self?.onTrackEnded?(.naturalEnd)
             Task { await self?.advanceAfterCompletion() }
         }
         playback.onPositionChange = { [weak self] position in
             self?.recordPosition(position)
             self?.onTrackPosition?(position)
-            self?.onNowPlayingPosition?(position)
             self?.publishNowPlaying()
         }
         playback.onPlaybackStateChange = { [weak self] state in
             self?.onPlaybackStateChange?(state)
-            self?.onNowPlayingState?(state)
             self?.publishNowPlaying()
         }
         playback.onPresentationChange = { [weak self] in self?.publishNowPlaying() }
         playback.onCommunicationFailure = { [weak self] diagnostic in
-            self?.onTrackEnded?(false)
-            self?.onNowPlayingState?(.unknown)
+            self?.onTrackEnded?(.error)
             self?.errorMessage = "通信が切断されました。再接続後に再試行してください。\n\(diagnostic.details)"
             self?.publishNowPlaying()
         }
         playback.onRendererTrackChanged = { [weak self] in
-            self?.onTrackEnded?(false)
-            self?.onNowPlayingTrack?(nil)
-            self?.errorMessage = "Renderer側で別の曲へ変更されました。Queueは保持しています。"
+            self?.onTrackEnded?(.error)
+            self?.errorMessage = "スピーカー側で別の曲へ変更されました。再生キューは保持しています。"
             self?.publishNowPlaying()
         }
+        playback.onShutdown = { [weak self] in self?.onTrackEnded?(.playerDestroyed) }
     }
 
     deinit { positionSaveTask?.cancel() }
@@ -107,9 +126,15 @@ public final class QueueStore {
         catch { errorMessage = error.localizedDescription }
     }
 
-    public func playNow(trackIDs: [Track.ID], startingAt trackID: Track.ID? = nil) async {
+    public func playNow(
+        trackIDs: [Track.ID], startingAt trackID: Track.ID? = nil,
+        source: MyMusicPlaySource = .unknown
+    ) async {
         guard !trackIDs.isEmpty else { return }
         await withPlaybackTransition {
+            onTrackEnded?(.queueReplacement)
+            currentPlaySource = snapshot.shuffleEnabled ? .shuffle : source
+            nextSelectionType = .manual
             var values = trackIDs
             if snapshot.shuffleEnabled { values.shuffle() }
             snapshot.items = values.map { QueueItem(trackID: $0) }
@@ -167,7 +192,29 @@ public final class QueueStore {
         selectedItemIDs.removeAll()
     }
 
+    public func moveNext(itemIDs: Set<QueueItem.ID>) async {
+        guard !itemIDs.isEmpty else { return }
+        let currentID = currentItemID
+        let moving = snapshot.items.filter { itemIDs.contains($0.id) && $0.id != currentID }
+        guard !moving.isEmpty else { return }
+        let movingIDs = Set(moving.map(\.id))
+        snapshot.items.removeAll { movingIDs.contains($0.id) }
+        let insertion: Int
+        if let currentID, let current = snapshot.items.firstIndex(where: { $0.id == currentID }) {
+            insertion = current + 1
+        } else {
+            insertion = 0
+        }
+        snapshot.items.insert(contentsOf: moving, at: insertion)
+        if let currentID { snapshot.currentIndex = snapshot.items.firstIndex(where: { $0.id == currentID }) }
+        selectedItemIDs = movingIDs
+        await persist()
+    }
+
+    public func moveSelectedNext() async { await moveNext(itemIDs: selectedItemIDs) }
+
     public func clear() async {
+        onTrackEnded?(.queueReplacement)
         snapshot.items = []
         snapshot.currentIndex = nil
         snapshot.position = 0
@@ -176,11 +223,18 @@ public final class QueueStore {
         await persist()
     }
 
-    public func next() async { await withPlaybackTransition { await advance(manual: true) } }
+    public func next() async {
+        await withPlaybackTransition {
+            onTrackEnded?(.userAdvanced)
+            nextSelectionType = .userAdvanced
+            await advance(manual: true)
+        }
+    }
 
     public func play() async {
         await withPlaybackTransition {
-            if playback.playbackState == .paused { await playback.play() }
+            if playback.selectedLibraryTrackID == nil, playback.media != nil { await playback.play() }
+            else if playback.playbackState == .paused { await playback.play() }
             else { await playCurrent() }
         }
     }
@@ -200,13 +254,16 @@ public final class QueueStore {
     public func stop() async {
         await withPlaybackTransition {
             await playback.stop()
-            onTrackEnded?(false)
+            onTrackEnded?(.stop)
         }
     }
 
     public func playItem(id: QueueItem.ID) async {
         guard let index = snapshot.items.firstIndex(where: { $0.id == id }) else { return }
         await withPlaybackTransition {
+            onTrackEnded?(.directSelection)
+            currentPlaySource = .queue
+            nextSelectionType = .manual
             snapshot.currentIndex = index; snapshot.position = 0; currentWasRemoved = false
             await persist(); await playCurrent()
         }
@@ -217,6 +274,8 @@ public final class QueueStore {
             guard let index = snapshot.currentIndex else { return }
             if snapshot.position > 3 { await playback.seek(to: 0); snapshot.position = 0; await persist(); return }
             guard index > 0 else { return }
+            onTrackEnded?(.userAdvanced)
+            nextSelectionType = .userAdvanced
             snapshot.currentIndex = index - 1; snapshot.position = 0; currentWasRemoved = false
             await persist(); await playCurrent()
         }
@@ -248,6 +307,7 @@ public final class QueueStore {
 
     private func advance(manual: Bool) async {
         guard !snapshot.items.isEmpty else { return }
+        nextSelectionType = manual ? .userAdvanced : .automatic
         if !manual, currentWasRemoved {
             currentWasRemoved = false
             snapshot.position = 0
@@ -264,9 +324,9 @@ public final class QueueStore {
 
     private func playCurrent() async {
         guard let track = currentTrack else {
-            errorMessage = "Queue内の曲がLibraryにないか、missingです。"; return
+            errorMessage = "再生キュー内の曲がライブラリにないか、ファイルが見つかりません。"; return
         }
-        guard track.scanState == .available else { errorMessage = "この曲はmissingのため再生できません。"; return }
+        guard track.scanState == .available else { errorMessage = "この曲のファイルが見つからないため再生できません。"; return }
         let resumePosition = snapshot.position
         guard let url = await library.prepareTrack(track.id) else {
             errorMessage = library.message
@@ -283,9 +343,7 @@ public final class QueueStore {
             errorMessage = playback.lastError?.details ?? "再生を開始できませんでした。"; return
         }
         if resumePosition > 0 { await playback.seek(to: resumePosition) }
-        onTrackStarted?(track.id)
-        onNowPlayingTrack?(track)
-        onNowPlayingState?(.playing)
+        onTrackStarted?(track.id, track.duration, currentPlaySource, nextSelectionType)
         publishNowPlaying()
         errorMessage = nil
     }

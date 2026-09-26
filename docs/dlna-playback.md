@@ -40,6 +40,8 @@ Phase 3ではこの探索結果を全件保持し、UDNをrenderer IDとしてUI
 - 実際にbindできたportを`TrackHTTPServer.port`へ保持し、そのportから音源URLを生成する。
 - URLは`/tracks/<opaque UUID>?token=<random token>`。ファイルパスは公開せず、登録した単一ファイル以外を取得できない。
 - `GET`／`HEAD`、`Content-Type`、`Content-Length`、`Accept-Ranges`、単一byte range、`206`、`Content-Range`に対応する。
+- HomeStereo本体のSonyステレオ出力では、左右のGET response bodyを共有開始ゲートへ到着させてから同時に送信開始する。片側が到達しない場合は2秒でゲートを開き、永久待機を避ける。単体RendererとCLIの配信には適用しない。
+- HomeStereo本体はHTTP server開始前のlocal address解決を短い間隔で最大4回確認する。状態読取SOAPは一時的なtimeout／接続不能／network断を最大3回確認するが、変更操作は重複実行を避けるため自動再送しない。
 - UPnP IGD操作やルータのport mappingは行わない。
 
 対応MIMEはMP3、M4A/MP4/ALAC、AAC、FLAC、WAV、AIFF。これはHTTP配信対応であり、実際のデコード可否はHG1のfirmwareと音源仕様に依存する。未対応時のトランスコードはPhase 1に含まない。

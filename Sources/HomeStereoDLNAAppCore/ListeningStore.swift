@@ -12,20 +12,29 @@ public final class ListeningStore {
     public private(set) var message: String?
 
     @ObservationIgnored private let repository: any LibraryPersisting
+    @ObservationIgnored private let myMusicRepository: (any MyMusicPersisting)?
     @ObservationIgnored private let library: LibraryStore
     @ObservationIgnored private let queue: QueueStore
     @ObservationIgnored private var activeEvent: PlaybackEvent?
     @ObservationIgnored private var lastTick: ContinuousClock.Instant?
     @ObservationIgnored private var isPlaying = false
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var myMusicSession: MyMusicPlaybackSession?
+    @ObservationIgnored private var myMusicTrackIDs: [Track.ID: UUID] = [:]
 
-    public init(repository: any LibraryPersisting, library: LibraryStore, queue: QueueStore) {
+    public init(
+        repository: any LibraryPersisting, library: LibraryStore, queue: QueueStore,
+        myMusicRepository: (any MyMusicPersisting)? = nil
+    ) {
         self.repository = repository
+        self.myMusicRepository = myMusicRepository
         self.library = library
         self.queue = queue
-        queue.onTrackStarted = { [weak self] id in self?.start(trackID: id) }
-        queue.onTrackPosition = { [weak self] _ in self?.tick() }
-        queue.onTrackEnded = { [weak self] completed in self?.finish(completed: completed) }
+        queue.onTrackStarted = { [weak self] id, duration, source, selection in
+            self?.start(trackID: id, duration: duration, source: source, selection: selection)
+        }
+        queue.onTrackPosition = { [weak self] position in self?.observe(position: position) }
+        queue.onTrackEnded = { [weak self] reason in self?.finish(reason: reason) }
         queue.onPlaybackStateChange = { [weak self] state in self?.stateChanged(state) }
     }
 
@@ -37,7 +46,12 @@ public final class ListeningStore {
         return resolve(events.sorted { $0.startedAt > $1.startedAt }.compactMap { seen.insert($0.trackID).inserted ? $0.trackID : nil })
     }
     public var frequentTracks: [FrequentTrack] {
-        Dictionary(grouping: events, by: \.trackID)
+        Dictionary(grouping: events.filter { event in
+            guard let duration = track(id: event.trackID)?.duration else { return false }
+            return MyMusicPlaybackPolicy.countsAsPlay(
+                listenedSeconds: event.playedSeconds, trackDuration: duration
+            )
+        }, by: \.trackID)
             .map { FrequentTrack(trackID: $0.key, playCount: $0.value.count) }
             .sorted { $0.playCount == $1.playCount ? $0.trackID.uuidString < $1.trackID.uuidString : $0.playCount > $1.playCount }
     }
@@ -52,6 +66,10 @@ public final class ListeningStore {
             async let loadedEvents = repository.loadPlaybackEvents()
             favorites = try await loadedFavorites
             events = try await loadedEvents
+            if let myMusicRepository {
+                myMusicTrackIDs = Dictionary(uniqueKeysWithValues: try await myMusicRepository
+                    .loadMyMusicTrackLinks().map { ($0.homeStereoTrackID, $0.myMusicTrackID) })
+            }
         } catch { message = error.localizedDescription }
     }
 
@@ -68,7 +86,7 @@ public final class ListeningStore {
     public func playFavorites(shuffled: Bool) async {
         var ids = favorites.map(\.trackID)
         if shuffled { ids.shuffle() }
-        await queue.playNow(trackIDs: ids)
+        await queue.playNow(trackIDs: ids, source: .favorite)
     }
 
     public func resetFavorites() async {
@@ -77,7 +95,7 @@ public final class ListeningStore {
     }
 
     public func resetHistory() async {
-        finish(completed: false)
+        finish(reason: .stop)
         await flush()
         do { try await repository.deleteAllPlaybackEvents(); events = [] }
         catch { message = error.localizedDescription }
@@ -93,21 +111,38 @@ public final class ListeningStore {
     public func track(id: Track.ID) -> Track? { library.tracks.first { $0.id == id } }
     public func dismissMessage() { message = nil }
 
-    private func start(trackID: Track.ID) {
+    private func start(
+        trackID: Track.ID, duration: TimeInterval,
+        source: MyMusicPlaySource, selection: MyMusicSelectionType
+    ) {
         if activeEvent?.trackID == trackID { isPlaying = true; lastTick = .now; return }
-        finish(completed: false)
+        finish(reason: .directSelection)
         let event = PlaybackEvent(trackID: trackID)
         activeEvent = event
         isPlaying = true
         lastTick = .now
         replace(event)
         scheduleSave(event)
+        myMusicSession = MyMusicPlaybackSession(
+            eventID: "mac-\(UUID().uuidString.lowercased())", homeStereoTrackID: trackID,
+            myMusicTrackID: myMusicTrackIDs[trackID],
+            startedAt: .now, trackDuration: duration, playSource: source, selectionType: selection
+        )
     }
 
     private func stateChanged(_ state: RendererPlaybackState) {
         tick()
         isPlaying = state == .playing
         lastTick = isPlaying ? .now : nil
+        myMusicSession?.setPlaying(isPlaying)
+    }
+
+    private func observe(position: TimeInterval) {
+        tick()
+        myMusicSession?.observe(
+            position: position,
+            maximumContinuousDelta: MyMusicPlaybackPolicy.maximumContinuousPositionDelta
+        )
     }
 
     private func tick() {
@@ -122,15 +157,23 @@ public final class ListeningStore {
         scheduleSave(event)
     }
 
-    private func finish(completed: Bool) {
+    private func finish(reason: MyMusicPlaybackEndReason) {
         tick()
-        guard var event = activeEvent else { return }
-        event.outcome = completed ? .completed : .stopped
-        activeEvent = nil
+        if var event = activeEvent {
+            event.outcome = reason == .naturalEnd ? .completed : .stopped
+            activeEvent = nil
+            replace(event)
+            scheduleSave(event)
+        }
         isPlaying = false
         lastTick = nil
-        replace(event)
-        scheduleSave(event)
+        guard var session = myMusicSession, let finalized = session.finalize(reason: reason) else { return }
+        myMusicSession = nil
+        guard let myMusicRepository else { return }
+        Task { [weak self] in
+            do { _ = try await myMusicRepository.appendLocalMyMusicPlaybackEvent(finalized) }
+            catch { self?.message = "再生履歴を保存できませんでした: \(error.localizedDescription)" }
+        }
     }
 
     private func replace(_ event: PlaybackEvent) {

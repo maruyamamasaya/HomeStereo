@@ -8,7 +8,7 @@ Keywords: `HomeStereoDLNAApp`, `DLNAContentView`, `DevicesView`, `PlaybackView`,
 ## State and Services
 
 Primary: `Sources/HomeStereoDLNAAppCore/`
-Keywords: `RendererPlaybackStore`, `RendererDiscovering`, `MediaServerCreating`, `RendererControlling`, `PlaybackDiagnostic`
+Keywords: `RendererPlaybackStore`, `RendererDiscovering`, `MediaServerCreating`, `RendererControlling`, `StereoMediaPreparing`, `prepareSynchronizationCheck`, `StereoRendererPair`, `PlaybackDiagnostic`
 Tests: `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
 ## Library Folder, Scan, and Persistence
@@ -43,8 +43,9 @@ Tests: `Tests/HomeStereoAppCoreTests/ListeningPersistenceTests.swift`
 
 ## macOS Playback Integration
 
-Primary: `Sources/HomeStereoDLNAAppCore/SystemPlaybackIntegration.swift`, `Sources/HomeStereoDLNAApp/MenuBarPlaybackView.swift`, `HomeStereoDLNAApp.swift`
-Keywords: `MPRemoteCommandCenter`, `MPNowPlayingInfoCenter`, `NowPlayingSnapshot`, `MenuBarExtra`
+Primary: `Sources/HomeStereoDLNAAppCore/DLNAModels.swift`, `QueueStore.swift`, `SystemPlaybackIntegration.swift`, `Sources/HomeStereoDLNAApp/MenuBarPlaybackView.swift`, `HomeStereoDLNAApp.swift`
+Keywords: `NowPlayingPresentation`, `NowPlayingDisplayState`, `nowPlaying`, `MPRemoteCommandCenter`, `MPNowPlayingInfoCenter`, `MenuBarExtra`
+Tests: `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
 ## Sleep, Network, and Recovery
 
@@ -63,6 +64,12 @@ Primary: `Sources/HomeStereoAppCore/BackupContract.swift`, `Sources/HomeStereoDL
 Keywords: `HomeStereoBackup`, `BackupCodec`, `BackupTrackMatcher`, `mergeBackup`, `BackupImportPreview`
 Tests: `Tests/HomeStereoAppCoreTests/BackupContractTests.swift`, `Tests/Fixtures/home-stereo-backup-v1.json`
 
+## MyMusic JSON Interchange
+
+Primary: `Sources/HomeStereoAppCore/MyMusicJSONContract.swift`, `MyMusicInterchangeModels.swift`, `MyMusicJSONService.swift`, `MyMusicPersistenceModels.swift`, `MyMusicPersistenceService.swift`, `MyMusicPlaybackSession.swift`, `MyMusicTransferService.swift`, `LibraryRepository.swift`, `Sources/HomeStereoDLNAAppCore/ListeningStore.swift`, `QueueStore.swift`, `MyMusicTransferStore.swift`, `Sources/HomeStereoDLNAApp/MyMusicTransferView.swift`, `docs/mymusic-json-interchange.md`
+Keywords: `MyMusic-Library.json`, `MyMusic-Playback-Preferences.json`, `MyMusic-Playback-Events.json`, `trackID`, `trackId`, `MyMusicJSONCodec`, `MyMusicPersistenceService`, `MyMusicPlaybackSession`, `MyMusicTransferStore`, `mymusic_track_links`, `mymusic_playback_events`
+Tests: `Tests/HomeStereoAppCoreTests/MyMusicJSONContractTests.swift`, `MyMusicPersistenceTests.swift`, `MyMusicPlaybackSessionTests.swift`, `Tests/HomeStereoDLNAAppCoreTests/MyMusicTransferStoreTests.swift`, `RendererPlaybackStoreTests.swift`
+
 ## Library Performance
 
 Primary: `Sources/HomeStereoAppCore/LibraryRepository.swift`, `LibraryService.swift`, `Sources/HomeStereoDLNAAppCore/LibraryStore.swift`, `ArtworkCache.swift`, `docs/performance.md`
@@ -76,9 +83,9 @@ Keywords: `SSDPDiscovery.discover`, `parseResponse`, `DeviceDescriptionLoader`, 
 
 ## Sony Stereo Bridge PoC
 
-Primary: `Sources/SonyStereoBridgeCLI/main.swift`, `scripts/sony-stereo-bridge-split.sh`, `docs/sony-stereo-bridge/`
-Keywords: `sony-stereo-bridge`, `probe`, `play-one`, `play-pair`, `leftDelayMs`, `GetProtocolInfo`
-Tests: `Tests/HomeStereoKitTests/HomeStereoKitTests.swift`
+Primary: `Sources/SonyStereoBridgeCLI/main.swift`, `Sources/SonyStereoBridgeAudio/`, `scripts/sony-stereo-bridge-split.sh`, `scripts/sony-stereo-bridge-sync-click.sh`, `scripts/sony-stereo-bridge-web.py`, `docs/sony-stereo-bridge/`
+Keywords: `sony-stereo-bridge`, `probe`, `audio-probe`, `capture-segments`, `BlackHoleSegmentCapture`, `StereoSegmentWriter`, `play-one`, `play-pair`, `leftDelayMs`, `GetProtocolInfo`
+Tests: `Tests/HomeStereoKitTests/HomeStereoKitTests.swift`, `Tests/SonyStereoBridgeAudioTests/SegmentWriterTests.swift`
 
 ## HTTP Media Server
 
@@ -92,5 +99,5 @@ Keywords: `UPnPController`, `SOAPRequestBuilder`, `SOAPResponseParser`, `GetTran
 
 ## Build and Permissions
 
-Primary: `Package.swift`, `HomeStereo.xcodeproj/project.pbxproj`, `HomeStereoApp.entitlements`
-Keywords: `HomeStereoDLNAApp`, `network.client`, `network.server`, `NSLocalNetworkUsageDescription`
+Primary: `Package.swift`, `HomeStereo.xcodeproj/project.pbxproj`, `HomeStereoApp.entitlements`, `scripts/deploy-macos.sh`
+Keywords: `HomeStereoDLNAApp`, `network.client`, `network.server`, `NSLocalNetworkUsageDescription`, `HomeStereoDeployDerivedData`, `CURRENT_PROJECT_VERSION`

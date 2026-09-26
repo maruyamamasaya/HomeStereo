@@ -13,15 +13,6 @@ public struct NowPlayingSnapshot: Equatable, Sendable {
     public let elapsed: TimeInterval
     public let isPlaying: Bool
 
-    public init(track: Track, elapsed: TimeInterval, isPlaying: Bool) {
-        title = track.title
-        artist = track.artist
-        album = track.album
-        duration = track.duration
-        self.elapsed = max(0, elapsed)
-        self.isPlaying = isPlaying
-    }
-
     public init?(presentation: NowPlayingPresentation) {
         guard let title = presentation.title else { return nil }
         self.title = title

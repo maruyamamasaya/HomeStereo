@@ -10,6 +10,7 @@ public final class BackupStore {
     public private(set) var pendingPreview: BackupImportPreview?
     public private(set) var lastImportResult: BackupImportPreview?
     public private(set) var message: String?
+    public private(set) var messageIsError = false
 
     @ObservationIgnored private let repository: any LibraryPersisting
     @ObservationIgnored private let library: LibraryStore
@@ -25,6 +26,7 @@ public final class BackupStore {
 
     public func export() async {
         guard let url = files.chooseExportURL() else { return }
+        lastImportResult = nil
         do {
             let document = makeDocument(
                 exportedAt: .now,
@@ -32,12 +34,15 @@ public final class BackupStore {
             )
             let data = try BackupCodec.encode(document)
             try data.write(to: url, options: .atomic)
-            message = "Backupを書き出しました。"
-        } catch { message = error.localizedDescription }
+            message = "バックアップを書き出しました。"
+            messageIsError = false
+        } catch { message = error.localizedDescription; messageIsError = true }
     }
 
     public func previewImport() async {
         guard let url = files.chooseImportURL() else { return }
+        message = nil
+        lastImportResult = nil
         do {
             let document = try BackupCodec.decode(Data(contentsOf: url))
             let resolved = Self.resolve(
@@ -45,7 +50,7 @@ public final class BackupStore {
                 existingFavorites: listening.favorites, existingEvents: listening.events
             )
             pending = resolved; pendingPreview = resolved.preview
-        } catch { pending = nil; pendingPreview = nil; message = error.localizedDescription }
+        } catch { pending = nil; pendingPreview = nil; message = error.localizedDescription; messageIsError = true }
     }
 
     public func applyImport() async {
@@ -57,11 +62,11 @@ public final class BackupStore {
             await playlists.load(); await listening.load()
             lastImportResult = pending.preview
             self.pending = nil; pendingPreview = nil
-        } catch { message = error.localizedDescription }
+        } catch { message = error.localizedDescription; messageIsError = true }
     }
 
     public func cancelImport() { pending = nil; pendingPreview = nil }
-    public func dismissMessage() { message = nil; lastImportResult = nil }
+    public func dismissMessage() { message = nil; messageIsError = false; lastImportResult = nil }
 
     public func makeDocument(exportedAt: Date, appVersion: String) -> HomeStereoBackup {
         let byID = Dictionary(uniqueKeysWithValues: library.tracks.map { ($0.id, $0) })

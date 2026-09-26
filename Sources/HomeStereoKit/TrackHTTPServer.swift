@@ -10,14 +10,25 @@ public final class TrackHTTPServer: @unchecked Sendable {
     public let mimeType: String
 
     private let queue = DispatchQueue(label: "HomeStereo.TrackHTTPServer")
+    private let startGate: TrackHTTPStartGate?
+    private let startGateParticipant: String?
     private var listener: NWListener?
 
-    public init(fileURL: URL, host: String, trackID: UUID = UUID(), token: String = UUID().uuidString.replacingOccurrences(of: "-", with: "")) throws {
+    public init(
+        fileURL: URL,
+        host: String,
+        trackID: UUID = UUID(),
+        token: String = UUID().uuidString.replacingOccurrences(of: "-", with: ""),
+        startGate: TrackHTTPStartGate? = nil,
+        startGateParticipant: String? = nil
+    ) throws {
         self.fileURL = fileURL.standardizedFileURL
         self.host = host
         self.trackID = trackID
         self.token = token
         self.mimeType = try AudioMIMEType.forFileURL(fileURL)
+        self.startGate = startGate
+        self.startGateParticipant = startGateParticipant
     }
 
     public var trackURL: URL {
@@ -124,7 +135,16 @@ public final class TrackHTTPServer: @unchecked Sendable {
             let headerData = Data((["HTTP/1.1 \(statusText)"] + serializedHeaders + ["Connection: close"]).joined(separator: "\r\n").appending("\r\n\r\n").utf8)
             connection.send(content: headerData, completion: .contentProcessed { [weak self] error in
                 guard error == nil, let selected = response.bodyRange, let self else { connection.cancel(); return }
-                self.sendFile(on: connection, range: selected)
+                let beginStreaming: @Sendable () -> Void = { [weak self] in
+                    guard let self else { connection.cancel(); return }
+                    self.queue.async { self.sendFile(on: connection, range: selected) }
+                }
+                if let startGate = self.startGate,
+                   let participant = self.startGateParticipant {
+                    startGate.arrive(participant: participant, completion: beginStreaming)
+                } else {
+                    beginStreaming()
+                }
             })
         } catch {
             print("[DLNA] HTTP request failed")
@@ -163,6 +183,56 @@ public final class TrackHTTPServer: @unchecked Sendable {
         let separator = headers.isEmpty ? "" : "\(headers)\r\n"
         let response = "HTTP/1.1 \(status)\r\n\(separator)Content-Length: 0\r\nConnection: close\r\n\r\n"
         connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+    }
+}
+
+public final class TrackHTTPStartGate: @unchecked Sendable {
+    private let participants: Set<String>
+    private let timeout: TimeInterval
+    private let lock = NSLock()
+    private var arrived: Set<String> = []
+    private var completions: [@Sendable () -> Void] = []
+    private var isOpen = false
+    private var timeoutWorkItem: DispatchWorkItem?
+
+    public init(participants: Set<String>, timeout: TimeInterval) {
+        precondition(!participants.isEmpty)
+        self.participants = participants
+        self.timeout = max(0, timeout)
+    }
+
+    public func arrive(participant: String, completion: @escaping @Sendable () -> Void) {
+        let callbacks: [@Sendable () -> Void] = lock.withLock {
+            guard !isOpen else { return [completion] }
+            guard participants.contains(participant) else { return [completion] }
+            arrived.insert(participant)
+            completions.append(completion)
+            if timeoutWorkItem == nil {
+                let workItem = DispatchWorkItem { [weak self] in self?.open() }
+                timeoutWorkItem = workItem
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                    deadline: .now() + timeout, execute: workItem
+                )
+            }
+            guard arrived.isSuperset(of: participants) else { return [] }
+            return takeCallbacksLocked()
+        }
+        callbacks.forEach { $0() }
+    }
+
+    private func open() {
+        let callbacks = lock.withLock { takeCallbacksLocked() }
+        callbacks.forEach { $0() }
+    }
+
+    private func takeCallbacksLocked() -> [@Sendable () -> Void] {
+        guard !isOpen else { return [] }
+        isOpen = true
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+        let callbacks = completions
+        completions.removeAll()
+        return callbacks
     }
 }
 

@@ -18,9 +18,11 @@ SwiftUI View
     -> MacPlaybackActivityManager -> idle sleep assertion
 ```
 
-Rendererはtoken付きLAN URLから音源を取得し、Sony側がWireless StereoのL/Rへ振り分ける。MacからL/Rへ個別streamを送らない。
+通常の単体出力ではRendererがtoken付きLAN URLから音源を取得する。Sonyステレオ出力では、AVFoundationで選択曲をLEFT／RIGHTのPCM WAVへ分離し、SRS-HG10とSRS-HG1向けに独立したtoken付きLAN URLを生成する。2つのUPnP controllerがSetURI／Play／Stop／Seek／Volumeを各Rendererへ並行送信する。左右割り当ては実機のfriendly nameに合わせ、HG10（L soundbar）=LEFT／HG1（R soundbar）=RIGHTとしてUIへ明示する。
 
-main Window、MenuBarExtra、小型player Window、Queue Inspectorは同じStore instanceを参照し、別の再生状態を持たない。window frameはAppKit autosave、SidebarはSceneStorage、InspectorはAppStorageで復元する。drag payloadはTrack UUIDだけを含み、音源pathやfile dataを渡さない。
+ステレオ出力品質は元sample rate／24-bit PCMのハイレゾ維持と、48kHz／16-bit PCMの安定優先を選べる。再生前に両controllerへ問い合わせて通信を確立し、SetURI後に両方のTrackURI一致を確認してからPlayを並行送信する。Sony独自MultiChannelによるネイティブSTEREOはHG10／HG1間で実機拒否されたため、自動fallbackや識別子偽装を行わない。
+
+main Window、MenuBarExtra、小型player Window、Queue Inspectorは同じStore instanceを参照し、別の再生状態を持たない。Queue曲、直接選択ファイル、Renderer polling結果は`QueueStore.nowPlaying`の`NowPlayingPresentation`へ集約し、画面と`MPNowPlayingInfoCenter`は同じ曲情報・状態・操作可否を使う。window frameはAppKit autosave、SidebarはSceneStorage、InspectorはAppStorageで復元する。drag payloadはTrack UUIDだけを含み、音源pathやfile dataを渡さない。
 
 ## Targets
 
@@ -29,17 +31,22 @@ main Window、MenuBarExtra、小型player Window、Queue Inspectorは同じStore
 - `HomeStereoAppCore`: Library model、folder access、AVFoundation scan、SQLite repository
 - `HomeStereoKit`: SSDP、Device XML、HTTP server、SOAP primitive
 - `HomeStereoCLI`: 既知IP向けの旧実機診断入口
-- `SonyStereoBridgeCLI`: MyMusic／macOS GUIから独立した2 Renderer固定WAV PoC。SSDP probe、SCPD action収集、ConnectionManager format収集、単一／左右別ファイル再生を担当する
+- `SonyStereoBridgeAudio`: BlackHole等のCore Audio device probe、AUHAL capture、共通timelineからのL/R固定長WAV segment生成
+- `SonyStereoBridgeCLI`: MyMusic／macOS GUIから独立した2 Renderer PoC。UPnP probe、固定WAV再生とCore Audio capture commandを担当する
 
 旧ローカル再生UIは現行targetに含めない。`HomeStereoAppCore`のLibrary関連sourceだけを現行Appから再利用する。
 
-Sony Stereo Bridgeの段階構成とPhase gateは[`docs/sony-stereo-bridge/architecture.md`](docs/sony-stereo-bridge/architecture.md)を正本とする。現段階では固定ファイルだけで、ライブ入力とWeb UIは含めない。
+Sony Stereo Bridgeの段階構成とPhase gateは[`docs/sony-stereo-bridge/architecture.md`](docs/sony-stereo-bridge/architecture.md)を正本とする。Phase 4は固定長capture segmentまでで、chunked／終端なしstreamは含めない。
 
 ## Data and Security
 
 Library index、Queue snapshot（Track ID、順序、現在位置、repeat／shuffle）、Playlist（順序付きTrack ID参照）、Favorite、再生イベントをApplication SupportのSQLiteへ保存する。関連データは音源を複製せず、missing Track ID参照も保持する。選択ファイルはsecurity-scoped read-only accessで直接読む。HTTP URLはopaque UUIDとrandom tokenを使い、固定LAN addressだけへbindする。serverはファイル／Renderer変更とapp終了時に停止する。
 
 SQLite schema v6はTrackにmacOS file resource identifierのopaque bytesを任意保存する。scanのIdentity判定は同一folder内で、path完全一致、resource identifierの一意一致、file size・duration・音源仕様・metadataの保守的一意一致の順で行う。曖昧なら新規Trackとし、判定理由をscan noticeへ残す。path変更と既存Track IDの確定はscan成功後の単一transaction内で行い、Playlist、Favorite、履歴、Queueの参照は書き換えない。
+
+SQLite schema v8はTrackへ音声トラックの推定bit rateを追加する。metadata schema v3では既存曲も次回scan時に再解析し、genre、release year、bit rateを更新する。
+
+iPhone版MyMusicとの将来連携は、曲一覧、Preferences、Playback Eventsを別々のversion付きJSON文書として扱う。`HomeStereoAppCore`内でCodable DTO、JSON非依存の交換model、Import／Export serviceを分離し、decode後に文書全体を検証してから交換modelへ変換する。SQLite schema v9は既存Track主キーを維持したまま外部Track ID対応、Preferences、互換Playback Eventsを独立tableへ保存する。HomeStereoの実再生はRenderer位置差分を追う一時的なSessionへ集約し、確定時だけRepository経由でappendする。未連携eventはHomeStereo Track IDで保持し、export時にlinkを遅延解決する。詳細は[`docs/mymusic-json-interchange.md`](docs/mymusic-json-interchange.md)を正本とする。
 
 ## Protocols
 

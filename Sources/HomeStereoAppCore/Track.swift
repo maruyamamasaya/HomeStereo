@@ -3,7 +3,7 @@ import Foundation
 public enum TrackScanState: String, Sendable { case available, unreadable, missing }
 
 public struct Track: Identifiable, Hashable, Sendable {
-    public static let metadataVersion = 2
+    public static let metadataVersion = 4
 
     public let id: UUID
     public let libraryFolderID: UUID
@@ -13,6 +13,7 @@ public struct Track: Identifiable, Hashable, Sendable {
     public let fileSize: Int64
     public let modificationDate: Date
     public let fileResourceIdentifier: Data?
+    public let audioFingerprint: String?
     public let title: String
     public let artist: String?
     public let albumArtist: String?
@@ -28,6 +29,7 @@ public struct Track: Identifiable, Hashable, Sendable {
     public let fileExtension: String
     public let codec: String?
     public let sampleRate: Double?
+    public let bitRate: Double?
     public let bitDepth: Int?
     public let channelCount: Int?
     public let hasArtwork: Bool
@@ -39,12 +41,12 @@ public struct Track: Identifiable, Hashable, Sendable {
     public init(
         id: UUID = UUID(), libraryFolderID: UUID = UUID(), relativePath: String? = nil,
         url: URL, fileSize: Int64 = 0, modificationDate: Date = .distantPast,
-        fileResourceIdentifier: Data? = nil,
+        fileResourceIdentifier: Data? = nil, audioFingerprint: String? = nil,
         title: String, artist: String? = nil, albumArtist: String? = nil,
         album: String? = nil, genre: String? = nil, composer: String? = nil,
         releaseYear: Int? = nil, trackNumber: Int? = nil, trackTotal: Int? = nil,
         discNumber: Int? = nil, discTotal: Int? = nil, duration: TimeInterval = 0,
-        codec: String? = nil, sampleRate: Double? = nil, bitDepth: Int? = nil,
+        codec: String? = nil, sampleRate: Double? = nil, bitRate: Double? = nil, bitDepth: Int? = nil,
         channelCount: Int? = nil, hasArtwork: Bool = false, artworkData: Data? = nil,
         scanState: TrackScanState = .available,
         metadataSchemaVersion: Int = Track.metadataVersion, lastScannedAt: Date = .now
@@ -58,6 +60,7 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.fileSize = fileSize
         self.modificationDate = modificationDate
         self.fileResourceIdentifier = fileResourceIdentifier
+        self.audioFingerprint = audioFingerprint
         self.title = title
         self.artist = artist
         self.albumArtist = albumArtist
@@ -73,6 +76,7 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.fileExtension = normalizedURL.pathExtension.lowercased()
         self.codec = codec
         self.sampleRate = sampleRate
+        self.bitRate = bitRate
         self.bitDepth = bitDepth
         self.channelCount = channelCount
         self.hasArtwork = hasArtwork || artworkData != nil
@@ -93,11 +97,12 @@ public struct Track: Identifiable, Hashable, Sendable {
             id: id, libraryFolderID: libraryFolderID, relativePath: relativePath ?? self.relativePath, url: url,
             fileSize: fileSize, modificationDate: modificationDate,
             fileResourceIdentifier: fileResourceIdentifier ?? self.fileResourceIdentifier,
+            audioFingerprint: audioFingerprint,
             title: title, artist: artist,
             albumArtist: albumArtist, album: album, genre: genre, composer: composer,
             releaseYear: releaseYear, trackNumber: trackNumber, trackTotal: trackTotal,
             discNumber: discNumber, discTotal: discTotal, duration: duration, codec: codec,
-            sampleRate: sampleRate, bitDepth: bitDepth, channelCount: channelCount,
+            sampleRate: sampleRate, bitRate: bitRate, bitDepth: bitDepth, channelCount: channelCount,
             hasArtwork: hasArtwork, artworkData: artworkData, scanState: scanState ?? self.scanState,
             metadataSchemaVersion: metadataSchemaVersion, lastScannedAt: scannedAt ?? lastScannedAt
         )
@@ -107,10 +112,11 @@ public struct Track: Identifiable, Hashable, Sendable {
         Track(
             id: id, libraryFolderID: libraryFolderID, relativePath: relativePath, url: url,
             fileSize: fileSize, modificationDate: modificationDate, fileResourceIdentifier: fileResourceIdentifier,
+            audioFingerprint: audioFingerprint,
             title: title, artist: artist, albumArtist: albumArtist, album: album, genre: genre,
             composer: composer, releaseYear: releaseYear, trackNumber: trackNumber, trackTotal: trackTotal,
             discNumber: discNumber, discTotal: discTotal, duration: duration, codec: codec,
-            sampleRate: sampleRate, bitDepth: bitDepth, channelCount: channelCount,
+            sampleRate: sampleRate, bitRate: bitRate, bitDepth: bitDepth, channelCount: channelCount,
             hasArtwork: hasArtwork, artworkData: artworkData, scanState: .available,
             metadataSchemaVersion: metadataSchemaVersion, lastScannedAt: scannedAt
         )

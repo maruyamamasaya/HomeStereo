@@ -26,6 +26,36 @@ public protocol MediaServerSession: AnyObject, Sendable {
 
 public protocol MediaServerCreating: Sendable {
     func start(fileURL: URL, rendererAddress: String) throws -> any MediaServerSession
+    func startStereoPair(
+        leftFileURL: URL,
+        leftRendererAddress: String,
+        rightFileURL: URL,
+        rightRendererAddress: String
+    ) throws -> (left: any MediaServerSession, right: any MediaServerSession)
+}
+
+public extension MediaServerCreating {
+    func startStereoPair(
+        leftFileURL: URL,
+        leftRendererAddress: String,
+        rightFileURL: URL,
+        rightRendererAddress: String
+    ) throws -> (left: any MediaServerSession, right: any MediaServerSession) {
+        let left = try start(fileURL: leftFileURL, rendererAddress: leftRendererAddress)
+        do {
+            let right = try start(fileURL: rightFileURL, rendererAddress: rightRendererAddress)
+            return (left, right)
+        } catch {
+            left.stop()
+            throw error
+        }
+    }
+}
+
+public protocol StereoMediaPreparing: Sendable {
+    func prepare(fileURL: URL, options: StereoPreparationOptions) async throws -> StereoMediaFiles
+    func prepareSynchronizationCheck(options: StereoPreparationOptions) async throws -> StereoMediaFiles
+    func remove(_ files: StereoMediaFiles)
 }
 
 public protocol RendererControlling: Sendable {
@@ -68,6 +98,14 @@ public protocol FolderChangeMonitoring: AnyObject {
 public protocol BackupFileServicing: AnyObject {
     func chooseImportURL() -> URL?
     func chooseExportURL() -> URL?
+}
+
+@MainActor
+public protocol MyMusicFileServicing: AnyObject {
+    func chooseImportURL() -> URL?
+    func chooseExportURL(defaultFileName: String) -> URL?
+    func read(from url: URL) throws -> Data
+    func write(_ data: Data, to url: URL) throws
 }
 
 public protocol PlaybackActivityManaging: AnyObject {

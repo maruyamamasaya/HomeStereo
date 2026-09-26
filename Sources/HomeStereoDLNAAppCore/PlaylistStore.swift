@@ -94,13 +94,16 @@ public final class PlaylistStore {
     }
 
     public func play(_ playlist: Playlist, shuffled: Bool) async {
-        var ids = playlist.items.map(\.trackID)
+        var ids: [Track.ID] = playlist.items.compactMap { item in
+            guard let track = library.tracks.first(where: { $0.id == item.trackID }), track.scanState == .available else { return nil }
+            return track.id
+        }
         if shuffled { ids.shuffle() }
-        await queue.playNow(trackIDs: ids)
+        await queue.playNow(trackIDs: ids, source: .playlist)
     }
 
     public func playNow(trackIDs: [Track.ID], startingAt: Track.ID? = nil) async {
-        await queue.playNow(trackIDs: trackIDs, startingAt: startingAt)
+        await queue.playNow(trackIDs: trackIDs, startingAt: startingAt, source: .playlist)
     }
 
     public func playNext(trackIDs: [Track.ID]) async { await queue.playNext(trackIDs: trackIDs) }

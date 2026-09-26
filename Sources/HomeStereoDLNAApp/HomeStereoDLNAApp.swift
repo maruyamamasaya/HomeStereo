@@ -16,6 +16,7 @@ struct HomeStereoDLNAApp: App {
     @State private var listening: ListeningStore
     @State private var recovery: RecoveryStore
     @State private var backup: BackupStore
+    @State private var myMusic: MyMusicTransferStore
     private let systemPlayback: SystemPlaybackIntegration
 
     init() {
@@ -25,7 +26,8 @@ struct HomeStereoDLNAApp: App {
         let playback = RendererPlaybackStore(
             discovery: RendererDiscoveryService(), descriptions: DeviceDescriptionService(),
             fileSelection: MediaFileSelectionService(), serverFactory: LocalMediaHTTPServerFactory(),
-            controller: UPnPRendererController(), activityManager: MacPlaybackActivityManager()
+            controller: UPnPRendererController(), secondaryController: UPnPRendererController(),
+            activityManager: MacPlaybackActivityManager()
         )
         let libraryStore = LibraryStore(
             scanner: LibraryService(), folderAccess: FolderAccessService(), repository: repository
@@ -38,7 +40,10 @@ struct HomeStereoDLNAApp: App {
             repository: repository, library: libraryStore, queue: queueStore, files: PlaylistFileService()
         )
         _playlists = State(initialValue: playlistStore)
-        let listeningStore = ListeningStore(repository: repository, library: libraryStore, queue: queueStore)
+        let listeningStore = ListeningStore(
+            repository: repository, library: libraryStore, queue: queueStore,
+            myMusicRepository: repository
+        )
         _listening = State(initialValue: listeningStore)
         _recovery = State(initialValue: RecoveryStore(
             monitor: MacSystemEventMonitor(), playback: playback, queue: queueStore, listening: listeningStore
@@ -47,12 +52,16 @@ struct HomeStereoDLNAApp: App {
             repository: repository, library: libraryStore, playlists: playlistStore,
             listening: listeningStore, files: BackupFileService()
         ))
+        _myMusic = State(initialValue: MyMusicTransferStore(repository: repository, files: MyMusicFileService()))
         systemPlayback = SystemPlaybackIntegration(queue: queueStore, playback: playback, library: libraryStore)
     }
 
     var body: some Scene {
         WindowGroup("HomeStereo", id: "main") {
-            DLNAContentView(store: store, library: library, queue: queue, playlists: playlists, listening: listening, recovery: recovery, backup: backup)
+            DLNAContentView(
+                store: store, library: library, queue: queue, playlists: playlists,
+                listening: listening, recovery: recovery, backup: backup, myMusic: myMusic
+            )
                 .background(WindowFrameAutosave(name: "HomeStereo.MainWindow.CompactV1"))
                 .task { recovery.start(); await library.load(); await queue.restore(); await playlists.load(); await listening.load(); await store.discoverRenderers() }
                 .onDisappear { recovery.stop(); library.pauseMonitoring(); Task { await listening.flush() }; library.releasePlaybackAccess(); store.shutdown() }
@@ -80,7 +89,7 @@ struct HomeStereoDLNAApp: App {
                     .keyboardShortcut("o", modifiers: [.command, .shift])
             }
             CommandGroup(after: .textEditing) {
-                Button("Libraryを検索") {
+                Button("ライブラリを検索") {
                     store.destination = .songs
                     library.requestSearchFocus()
                 }

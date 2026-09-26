@@ -4,6 +4,29 @@ import XCTest
 @testable import HomeStereoAppCore
 
 final class LibraryPersistenceTests: XCTestCase {
+    func testExtendedTrackMetadataRoundTrip() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let folder = LibraryFolder(displayName: "Music", path: fixture.folder.path)
+        try await repository.addFolder(folder, bookmarkData: Data([1]))
+        let track = Track(
+            libraryFolderID: folder.id, relativePath: "tone.wav", url: fixture.audio,
+            fileSize: 32_000, title: "Tone", genre: "Jazz", releaseYear: 2024,
+            duration: 1, sampleRate: 44_100, bitRate: 256_000
+        )
+
+        try await repository.applySuccessfulScan(folderID: folder.id, tracks: [track], scannedAt: .now)
+        let loadedTracks = try await repository.loadTracks(folderID: folder.id)
+        let loaded = try XCTUnwrap(loadedTracks.first)
+
+        XCTAssertEqual(loaded.genre, "Jazz")
+        XCTAssertEqual(loaded.releaseYear, 2024)
+        XCTAssertEqual(loaded.sampleRate, 44_100)
+        XCTAssertEqual(loaded.bitRate, 256_000)
+        XCTAssertEqual(loaded.fileSize, 32_000)
+    }
+
     func testSchemaFolderAndTrackRoundTripKeepsStableID() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -12,10 +35,11 @@ final class LibraryPersistenceTests: XCTestCase {
         try await repository.addFolder(folder, bookmarkData: Data([1, 2, 3]))
 
         let schemaVersion = try await repository.schemaVersion()
-        XCTAssertEqual(schemaVersion, 6)
+        XCTAssertEqual(schemaVersion, SQLiteLibraryRepository.currentSchemaVersion)
         let first = try await LibraryService().scan(folder: folder, resolvedURL: fixture.folder, existingTracks: []) { _ in }
         try await repository.applySuccessfulScan(folderID: folder.id, tracks: first.tracks, scannedAt: .now)
         let persisted = try await repository.loadTracks(folderID: folder.id)
+        XCTAssertEqual(persisted.first?.bitRate, first.tracks.first?.bitRate)
         let second = try await LibraryService().scan(folder: folder, resolvedURL: fixture.folder, existingTracks: persisted) { _ in }
 
         XCTAssertEqual(first.tracks.first?.id, second.tracks.first?.id)
@@ -178,7 +202,7 @@ final class LibraryPersistenceTests: XCTestCase {
         XCTAssertEqual(retained.relativePath, "old.wav")
     }
 
-    func testSchemaFiveMigratesToSixWithoutDroppingTracks() async throws {
+    func testOlderSchemaMigratesWithoutDroppingTracks() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         let folder = LibraryFolder(displayName: "Music", path: fixture.folder.path)
@@ -199,7 +223,7 @@ final class LibraryPersistenceTests: XCTestCase {
 
         let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
         let version = try await repository.schemaVersion()
-        XCTAssertEqual(version, 6)
+        XCTAssertEqual(version, SQLiteLibraryRepository.currentSchemaVersion)
         let tracks = try await repository.loadTracks(folderID: folder.id)
         XCTAssertEqual(tracks.first?.id, track.id)
         XCTAssertNil(tracks.first?.fileResourceIdentifier)

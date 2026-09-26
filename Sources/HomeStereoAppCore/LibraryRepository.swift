@@ -1,8 +1,8 @@
 import Foundation
 import SQLite3
 
-public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendable {
-    public static let currentSchemaVersion = 6
+public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting, @unchecked Sendable {
+    public static let currentSchemaVersion = 9
     private let lock = NSRecursiveLock()
     private var database: OpaquePointer?
 
@@ -114,7 +114,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
                    t.track_number, t.track_total, t.disc_number, t.disc_total, t.duration,
                    t.file_extension, t.codec, t.sample_rate, t.bit_depth, t.channel_count,
                    t.has_artwork, t.scan_state, t.metadata_version, t.last_scanned_at,
-                   t.file_resource_identifier
+                   t.file_resource_identifier, t.audio_fingerprint, t.bit_rate
             FROM tracks t JOIN library_folders f ON f.id = t.folder_id
             """
             if folderID != nil { sql += " WHERE t.folder_id = ?" }
@@ -128,13 +128,14 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
                     id: UUID(uuidString: text(statement, 0))!, libraryFolderID: UUID(uuidString: text(statement, 1))!,
                     relativePath: relative, url: root.appendingPathComponent(relative),
                     fileSize: sqlite3_column_int64(statement, 4), modificationDate: date(statement, 5),
-                    fileResourceIdentifier: optionalData(statement, 27),
+                    fileResourceIdentifier: optionalData(statement, 27), audioFingerprint: optionalText(statement, 28),
                     title: text(statement, 6), artist: optionalText(statement, 7), albumArtist: optionalText(statement, 8),
                     album: optionalText(statement, 9), genre: optionalText(statement, 10), composer: optionalText(statement, 11),
                     releaseYear: optionalInt(statement, 12), trackNumber: optionalInt(statement, 13),
                     trackTotal: optionalInt(statement, 14), discNumber: optionalInt(statement, 15), discTotal: optionalInt(statement, 16),
                     duration: sqlite3_column_double(statement, 17), codec: optionalText(statement, 19),
-                    sampleRate: optionalDouble(statement, 20), bitDepth: optionalInt(statement, 21),
+                    sampleRate: optionalDouble(statement, 20), bitRate: optionalDouble(statement, 29),
+                    bitDepth: optionalInt(statement, 21),
                     channelCount: optionalInt(statement, 22), hasArtwork: sqlite3_column_int(statement, 23) != 0,
                     scanState: TrackScanState(rawValue: text(statement, 24)) ?? .unreadable,
                     metadataSchemaVersion: Int(sqlite3_column_int(statement, 25)), lastScannedAt: date(statement, 26)
@@ -154,7 +155,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
                     throw UserFacingError.persistenceFailed("scan結果のTrack IDまたはrelative pathが重複しています。")
                 }
                 let existing = try query(
-                    "SELECT normalized_path, file_size, modification_date, scan_state, metadata_version, file_resource_identifier FROM tracks WHERE folder_id = ?",
+                    "SELECT normalized_path, file_size, modification_date, scan_state, metadata_version, file_resource_identifier, audio_fingerprint FROM tracks WHERE folder_id = ?",
                     binds: { bind(folderID.uuidString, to: $0, at: 1) }
                 ) { statement in
                     (
@@ -162,7 +163,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
                         TrackFingerprint(
                             fileSize: sqlite3_column_int64(statement, 1), modificationDate: sqlite3_column_double(statement, 2),
                             scanState: text(statement, 3), metadataVersion: Int(sqlite3_column_int(statement, 4)),
-                            fileResourceIdentifier: optionalData(statement, 5)
+                            fileResourceIdentifier: optionalData(statement, 5), audioFingerprint: optionalText(statement, 6)
                         )
                     )
                 }
@@ -176,7 +177,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
                     let value = TrackFingerprint(
                         fileSize: track.fileSize, modificationDate: track.modificationDate.timeIntervalSince1970,
                         scanState: track.scanState.rawValue, metadataVersion: track.metadataSchemaVersion,
-                        fileResourceIdentifier: track.fileResourceIdentifier
+                        fileResourceIdentifier: track.fileResourceIdentifier, audioFingerprint: track.audioFingerprint
                     )
                     if let previousKey = existingLocations[track.id], previousKey != key {
                         try update(
@@ -343,6 +344,259 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
         }
     }
 
+    public func loadMyMusicMatchContext() async throws -> (tracks: [Track], links: [MyMusicTrackLink]) {
+        let tracks = try await loadTracks(folderID: nil)
+        let links = try await loadMyMusicTrackLinks()
+        return (tracks, links)
+    }
+
+    public func loadMyMusicTrackLinks() async throws -> [MyMusicTrackLink] {
+        try withLock {
+            try query("""
+                SELECT home_track_id, mymusic_track_id, relative_path, file_size, duration,
+                       audio_fingerprint, matched_at, match_method, source
+                FROM mymusic_track_links ORDER BY mymusic_track_id
+                """) { statement in
+                MyMusicTrackLink(
+                    homeStereoTrackID: UUID(uuidString: text(statement, 0))!,
+                    myMusicTrackID: UUID(uuidString: text(statement, 1))!,
+                    relativePath: text(statement, 2), fileSize: sqlite3_column_int64(statement, 3),
+                    duration: sqlite3_column_double(statement, 4), audioFingerprint: optionalText(statement, 5),
+                    matchedAt: date(statement, 6),
+                    matchMethod: MyMusicTrackMatchMethod(rawValue: text(statement, 7)) ?? .manual,
+                    source: MyMusicLinkSource(rawValue: text(statement, 8)) ?? .manual
+                )
+            }
+        }
+    }
+
+    public func saveMyMusicTrackLinks(_ links: [MyMusicTrackLink]) async throws {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                for link in links {
+                    try update("""
+                        INSERT INTO mymusic_track_links(
+                            home_track_id, mymusic_track_id, relative_path, file_size, duration,
+                            audio_fingerprint, matched_at, match_method, source
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(home_track_id) DO UPDATE SET
+                            mymusic_track_id=excluded.mymusic_track_id,
+                            relative_path=excluded.relative_path, file_size=excluded.file_size,
+                            duration=excluded.duration, audio_fingerprint=excluded.audio_fingerprint,
+                            matched_at=excluded.matched_at, match_method=excluded.match_method,
+                            source=excluded.source
+                        """) { statement in
+                        bind(link.homeStereoTrackID.uuidString, to: statement, at: 1)
+                        bind(link.myMusicTrackID.uuidString, to: statement, at: 2)
+                        bind(link.relativePath, to: statement, at: 3); bind(link.fileSize, to: statement, at: 4)
+                        bind(link.duration, to: statement, at: 5); bind(link.audioFingerprint, to: statement, at: 6)
+                        bind(link.matchedAt.timeIntervalSince1970, to: statement, at: 7)
+                        bind(link.matchMethod.rawValue, to: statement, at: 8); bind(link.source.rawValue, to: statement, at: 9)
+                    }
+                }
+                try execute("COMMIT")
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
+    }
+
+    public func mergeMyMusicPreferences(
+        _ preferences: [MyMusicPreferenceRecord], exportedAt: Date
+    ) async throws -> MyMusicPreferencesPersistenceResult {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let links = Dictionary(uniqueKeysWithValues: try query(
+                    "SELECT mymusic_track_id, home_track_id FROM mymusic_track_links"
+                ) { (UUID(uuidString: text($0, 0))!, UUID(uuidString: text($0, 1))!) })
+                let existing = Dictionary(uniqueKeysWithValues: try query(
+                    "SELECT mymusic_track_id, playback_preference, favorite FROM mymusic_preferences"
+                ) { (UUID(uuidString: text($0, 0))!, (Int(sqlite3_column_int64($0, 1)), sqlite3_column_int($0, 2) != 0)) })
+                var favoriteIDs = Set(try query("SELECT track_id FROM favorites") { UUID(uuidString: text($0, 0))! })
+                var updated = 0, unchanged = 0
+                var unresolved: [UUID] = []
+                for preference in preferences {
+                    guard let homeID = links[preference.trackID] else { unresolved.append(preference.trackID); continue }
+                    let favoriteIsCurrent = favoriteIDs.contains(homeID) == preference.favorite
+                    if existing[preference.trackID]?.0 == preference.playbackPreference,
+                       existing[preference.trackID]?.1 == preference.favorite, favoriteIsCurrent {
+                        unchanged += 1; continue
+                    }
+                    try update("""
+                        INSERT INTO mymusic_preferences(
+                            home_track_id, mymusic_track_id, playback_preference, favorite, exported_at
+                        ) VALUES(?, ?, ?, ?, ?)
+                        ON CONFLICT(home_track_id) DO UPDATE SET
+                            mymusic_track_id=excluded.mymusic_track_id,
+                            playback_preference=excluded.playback_preference,
+                            favorite=excluded.favorite, exported_at=excluded.exported_at
+                        """) { statement in
+                        bind(homeID.uuidString, to: statement, at: 1); bind(preference.trackID.uuidString, to: statement, at: 2)
+                        bind(preference.playbackPreference, to: statement, at: 3); bind(preference.favorite ? 1 : 0, to: statement, at: 4)
+                        bind(exportedAt.timeIntervalSince1970, to: statement, at: 5)
+                    }
+                    if preference.favorite {
+                        try update("INSERT OR IGNORE INTO favorites(track_id, added_at) VALUES(?, ?)") {
+                            bind(homeID.uuidString, to: $0, at: 1); bind(exportedAt.timeIntervalSince1970, to: $0, at: 2)
+                        }
+                        favoriteIDs.insert(homeID)
+                    } else {
+                        try update("DELETE FROM favorites WHERE track_id = ?") { bind(homeID.uuidString, to: $0, at: 1) }
+                        favoriteIDs.remove(homeID)
+                    }
+                    updated += 1
+                }
+                try execute("COMMIT")
+                return MyMusicPreferencesPersistenceResult(
+                    updated: updated, unchanged: unchanged, unresolvedTrackIDs: unresolved
+                )
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
+    }
+
+    public func loadMyMusicPreferences() async throws -> [PersistedMyMusicPreference] {
+        try withLock {
+            try query("""
+                SELECT home_track_id, mymusic_track_id, playback_preference, favorite, exported_at
+                FROM mymusic_preferences ORDER BY mymusic_track_id
+                """) {
+                PersistedMyMusicPreference(
+                    homeStereoTrackID: UUID(uuidString: text($0, 0))!, myMusicTrackID: UUID(uuidString: text($0, 1))!,
+                    playbackPreference: Int(sqlite3_column_int64($0, 2)), favorite: sqlite3_column_int($0, 3) != 0,
+                    exportedAt: date($0, 4)
+                )
+            }
+        }
+    }
+
+    public func appendMyMusicPlaybackEvents(
+        _ events: [MyMusicPlaybackEventRecord]
+    ) async throws -> MyMusicPlaybackEventsPersistenceResult {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let links = Dictionary(uniqueKeysWithValues: try query(
+                    "SELECT mymusic_track_id, home_track_id FROM mymusic_track_links"
+                ) { (UUID(uuidString: text($0, 0))!, UUID(uuidString: text($0, 1))!) })
+                var existingIDs = Set(try query("SELECT event_id FROM mymusic_playback_events") { text($0, 0) })
+                var inserted = 0, duplicates = 0
+                var unresolved: [UUID] = []
+                for event in events {
+                    if existingIDs.contains(event.eventID) { duplicates += 1; continue }
+                    guard let homeID = links[event.trackID] else { unresolved.append(event.trackID); continue }
+                    try update("""
+                        INSERT INTO mymusic_playback_events(
+                            event_id, home_track_id, mymusic_track_id, played_at, play_duration,
+                            track_duration, completed, skipped, play_source, selection_type, platform, schema_version
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """) { statement in
+                        bind(event.eventID, to: statement, at: 1); bind(homeID.uuidString, to: statement, at: 2)
+                        bind(event.trackID.uuidString, to: statement, at: 3); bind(event.playedAt.timeIntervalSince1970, to: statement, at: 4)
+                        bind(event.playDuration, to: statement, at: 5); bind(event.trackDuration, to: statement, at: 6)
+                        bind(event.completed ? 1 : 0, to: statement, at: 7); bind(event.skipped ? 1 : 0, to: statement, at: 8)
+                        bind(event.playSource, to: statement, at: 9); bind(event.selectionType, to: statement, at: 10)
+                        bind(event.platform, to: statement, at: 11); bind(event.schemaVersion, to: statement, at: 12)
+                    }
+                    existingIDs.insert(event.eventID); inserted += 1
+                }
+                try execute("COMMIT")
+                return MyMusicPlaybackEventsPersistenceResult(
+                    inserted: inserted, duplicates: duplicates, unresolvedTrackIDs: unresolved
+                )
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
+    }
+
+    @discardableResult
+    public func appendLocalMyMusicPlaybackEvent(_ event: LocalMyMusicPlaybackEvent) async throws -> Bool {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let linkedID = try query(
+                    "SELECT mymusic_track_id FROM mymusic_track_links WHERE home_track_id = ?",
+                    binds: { bind(event.homeStereoTrackID.uuidString, to: $0, at: 1) }
+                ) { optionalText($0, 0) }.first ?? nil
+                let externalID = event.myMusicTrackID?.uuidString ?? linkedID
+                try update("""
+                    INSERT OR IGNORE INTO mymusic_playback_events(
+                        event_id, home_track_id, mymusic_track_id, played_at, play_duration,
+                        track_duration, completed, skipped, play_source, selection_type, platform, schema_version
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """) { statement in
+                    bind(event.eventID, to: statement, at: 1)
+                    bind(event.homeStereoTrackID.uuidString, to: statement, at: 2)
+                    bind(externalID, to: statement, at: 3)
+                    bind(event.playedAt.timeIntervalSince1970, to: statement, at: 4)
+                    bind(event.playDuration, to: statement, at: 5)
+                    bind(event.trackDuration, to: statement, at: 6)
+                    bind(event.completed ? 1 : 0, to: statement, at: 7)
+                    bind(event.skipped ? 1 : 0, to: statement, at: 8)
+                    bind(event.playSource.rawValue, to: statement, at: 9)
+                    bind(event.selectionType.rawValue, to: statement, at: 10)
+                    bind(event.platform, to: statement, at: 11)
+                    bind(event.schemaVersion, to: statement, at: 12)
+                }
+                let inserted = sqlite3_changes(database) > 0
+                try execute("COMMIT")
+                return inserted
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
+    }
+
+    public func loadMyMusicPlaybackEvents() async throws -> [PersistedMyMusicPlaybackEvent] {
+        try withLock {
+            try query("""
+                SELECT event_id, home_track_id, mymusic_track_id, played_at, play_duration,
+                       track_duration, completed, skipped, play_source, selection_type, platform, schema_version
+                FROM mymusic_playback_events ORDER BY played_at, event_id
+                """) {
+                PersistedMyMusicPlaybackEvent(
+                    eventID: text($0, 0), homeStereoTrackID: UUID(uuidString: text($0, 1))!,
+                    myMusicTrackID: optionalText($0, 2).flatMap(UUID.init(uuidString:)), playedAt: date($0, 3),
+                    playDuration: sqlite3_column_double($0, 4), trackDuration: sqlite3_column_double($0, 5),
+                    completed: sqlite3_column_int($0, 6) != 0, skipped: sqlite3_column_int($0, 7) != 0,
+                    playSource: text($0, 8), selectionType: text($0, 9), platform: text($0, 10),
+                    schemaVersion: Int(sqlite3_column_int64($0, 11))
+                )
+            }
+        }
+    }
+
+    public func loadMyMusicLibraryRecords() async throws -> [MyMusicTrackRecord] {
+        let context = try await loadMyMusicMatchContext()
+        let tracks = Dictionary(uniqueKeysWithValues: context.tracks.map { ($0.id, $0) })
+        return context.links.compactMap { link in
+            guard let track = tracks[link.homeStereoTrackID] else { return nil }
+            let fileFormat = track.fileExtension.uppercased()
+            return MyMusicTrackRecord(
+                trackID: link.myMusicTrackID, title: track.title, artist: track.artist ?? "",
+                album: track.album, genre: track.genre, year: track.releaseYear, duration: track.duration,
+                format: ["FLAC", "ALAC", "AAC", "MP3", "WAV", "AIFF"].contains(fileFormat) ? fileFormat : nil,
+                audioFingerprint: link.audioFingerprint,
+                relativePath: track.relativePath, fileSize: track.fileSize
+            )
+        }
+    }
+
+    public func loadMyMusicPlaybackEventRecords() async throws -> [MyMusicPlaybackEventRecord] {
+        let persisted = try await loadMyMusicPlaybackEvents()
+        let tracks = Dictionary(uniqueKeysWithValues: try await loadTracks(folderID: nil).map { ($0.id, $0) })
+        let links = Dictionary(uniqueKeysWithValues: try await loadMyMusicTrackLinks().map {
+            ($0.homeStereoTrackID, $0.myMusicTrackID)
+        })
+        return persisted.compactMap { event in
+            guard let track = tracks[event.homeStereoTrackID],
+                  let externalID = event.myMusicTrackID ?? links[event.homeStereoTrackID] else { return nil }
+            return MyMusicPlaybackEventRecord(
+                eventID: event.eventID, trackID: externalID, trackTitle: track.title,
+                artist: track.artist ?? "", album: track.album, playedAt: event.playedAt,
+                playDuration: event.playDuration, trackDuration: event.trackDuration,
+                completed: event.completed, skipped: event.skipped, playSource: event.playSource,
+                selectionType: event.selectionType, platform: event.platform, schemaVersion: event.schemaVersion
+            )
+        }
+    }
+
     private func savePlaylistStatements(_ playlist: Playlist) throws {
         let persistedUpdatedAt = try query(
             "SELECT updated_at FROM playlists WHERE id = ?", binds: { bind(playlist.id.uuidString, to: $0, at: 1) }
@@ -382,7 +636,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
             file_extension TEXT NOT NULL, codec TEXT, sample_rate REAL, bit_depth INTEGER,
             channel_count INTEGER, has_artwork INTEGER NOT NULL, scan_state TEXT NOT NULL,
             metadata_version INTEGER NOT NULL, last_scanned_at REAL NOT NULL,
-            file_resource_identifier BLOB,
+            file_resource_identifier BLOB, bit_rate REAL,
             UNIQUE(folder_id, normalized_path)
         );
         CREATE TABLE IF NOT EXISTS library_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -408,6 +662,29 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
             id TEXT PRIMARY KEY, track_id TEXT NOT NULL, started_at REAL NOT NULL,
             played_seconds REAL NOT NULL CHECK(played_seconds >= 0), outcome TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS mymusic_track_links(
+            home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+            mymusic_track_id TEXT NOT NULL UNIQUE, relative_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL CHECK(file_size >= 0), duration REAL NOT NULL CHECK(duration >= 0),
+            audio_fingerprint TEXT, matched_at REAL NOT NULL, match_method TEXT NOT NULL, source TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mymusic_preferences(
+            home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+            mymusic_track_id TEXT NOT NULL UNIQUE, playback_preference INTEGER NOT NULL,
+            favorite INTEGER NOT NULL, exported_at REAL NOT NULL,
+            CHECK(playback_preference BETWEEN -10 AND 10), CHECK(favorite IN (0, 1))
+        );
+        CREATE TABLE IF NOT EXISTS mymusic_playback_events(
+            event_id TEXT PRIMARY KEY, home_track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            mymusic_track_id TEXT, played_at REAL NOT NULL,
+            play_duration REAL NOT NULL CHECK(play_duration >= 0),
+            track_duration REAL NOT NULL CHECK(track_duration >= 0),
+            completed INTEGER NOT NULL CHECK(completed IN (0, 1)),
+            skipped INTEGER NOT NULL CHECK(skipped IN (0, 1)),
+            play_source TEXT NOT NULL, selection_type TEXT NOT NULL,
+            platform TEXT NOT NULL, schema_version INTEGER NOT NULL,
+            CHECK(NOT(completed = 1 AND skipped = 1))
+        );
         CREATE INDEX IF NOT EXISTS idx_tracks_folder_relative ON tracks(folder_id, relative_path);
         CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist COLLATE NOCASE);
         CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_artist COLLATE NOCASE, album COLLATE NOCASE);
@@ -417,7 +694,37 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
             if !columns.contains("file_resource_identifier") {
                 try execute("ALTER TABLE tracks ADD COLUMN file_resource_identifier BLOB")
             }
-            try execute("PRAGMA user_version = 6")
+            if !columns.contains("audio_fingerprint") {
+                try execute("ALTER TABLE tracks ADD COLUMN audio_fingerprint TEXT")
+            }
+            if !columns.contains("bit_rate") {
+                try execute("ALTER TABLE tracks ADD COLUMN bit_rate REAL")
+            }
+            let eventTrackIDIsRequired = try query("PRAGMA table_info(mymusic_playback_events)") {
+                (name: text($0, 1), required: sqlite3_column_int($0, 3) != 0)
+            }.contains { $0.name == "mymusic_track_id" && $0.required }
+            if eventTrackIDIsRequired {
+                try execute("""
+                    ALTER TABLE mymusic_playback_events RENAME TO mymusic_playback_events_v8;
+                    CREATE TABLE mymusic_playback_events(
+                        event_id TEXT PRIMARY KEY,
+                        home_track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                        mymusic_track_id TEXT, played_at REAL NOT NULL,
+                        play_duration REAL NOT NULL CHECK(play_duration >= 0),
+                        track_duration REAL NOT NULL CHECK(track_duration >= 0),
+                        completed INTEGER NOT NULL CHECK(completed IN (0, 1)),
+                        skipped INTEGER NOT NULL CHECK(skipped IN (0, 1)),
+                        play_source TEXT NOT NULL, selection_type TEXT NOT NULL,
+                        platform TEXT NOT NULL, schema_version INTEGER NOT NULL,
+                        CHECK(NOT(completed = 1 AND skipped = 1))
+                    );
+                    INSERT INTO mymusic_playback_events SELECT * FROM mymusic_playback_events_v8;
+                    DROP TABLE mymusic_playback_events_v8;
+                    """)
+            }
+            try execute("CREATE INDEX IF NOT EXISTS idx_tracks_audio_fingerprint ON tracks(audio_fingerprint)")
+            try execute("CREATE INDEX IF NOT EXISTS idx_mymusic_events_track ON mymusic_playback_events(mymusic_track_id, played_at)")
+            try execute("PRAGMA user_version = \(Self.currentSchemaVersion)")
             try execute("COMMIT")
         } catch {
             try? execute("ROLLBACK")
@@ -432,8 +739,8 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
           title, artist, album_artist, album, genre, composer, release_year, track_number,
           track_total, disc_number, disc_total, duration, file_extension, codec, sample_rate,
           bit_depth, channel_count, has_artwork, scan_state, metadata_version, last_scanned_at,
-          file_resource_identifier
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          file_resource_identifier, audio_fingerprint, bit_rate
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(folder_id, normalized_path) DO UPDATE SET
           id=excluded.id, relative_path=excluded.relative_path, file_size=excluded.file_size,
           modification_date=excluded.modification_date, title=excluded.title, artist=excluded.artist,
@@ -444,13 +751,16 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
           sample_rate=excluded.sample_rate, bit_depth=excluded.bit_depth, channel_count=excluded.channel_count,
           has_artwork=excluded.has_artwork, scan_state=excluded.scan_state,
           metadata_version=excluded.metadata_version, last_scanned_at=excluded.last_scanned_at,
-          file_resource_identifier=excluded.file_resource_identifier
+          file_resource_identifier=excluded.file_resource_identifier,
+          audio_fingerprint=excluded.audio_fingerprint, bit_rate=excluded.bit_rate
         WHERE tracks.file_size != excluded.file_size
            OR tracks.modification_date != excluded.modification_date
            OR tracks.scan_state != excluded.scan_state
            OR tracks.metadata_version != excluded.metadata_version
            OR tracks.relative_path != excluded.relative_path
            OR tracks.file_resource_identifier IS NOT excluded.file_resource_identifier
+           OR tracks.audio_fingerprint IS NOT excluded.audio_fingerprint
+           OR tracks.bit_rate IS NOT excluded.bit_rate
         """
         try update(sql) { s in
             bind(track.id.uuidString, to: s, at: 1); bind(track.libraryFolderID.uuidString, to: s, at: 2)
@@ -465,6 +775,8 @@ public final class SQLiteLibraryRepository: LibraryPersisting, @unchecked Sendab
             bind(track.scanState.rawValue, to: s, at: 25); bind(track.metadataSchemaVersion, to: s, at: 26)
             bind(track.lastScannedAt.timeIntervalSince1970, to: s, at: 27)
             bind(track.fileResourceIdentifier, to: s, at: 28)
+            bind(track.audioFingerprint, to: s, at: 29)
+            bind(track.bitRate, to: s, at: 30)
         }
     }
 
@@ -517,6 +829,7 @@ private struct TrackFingerprint: Equatable {
     let scanState: String
     let metadataVersion: Int
     let fileResourceIdentifier: Data?
+    let audioFingerprint: String?
 }
 
 private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

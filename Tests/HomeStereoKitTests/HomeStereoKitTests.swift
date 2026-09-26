@@ -2,6 +2,24 @@ import Foundation
 import Testing
 @testable import HomeStereoKit
 
+@Test func stereoHTTPStartGateReleasesBothStreamsTogether() {
+    let gate = TrackHTTPStartGate(participants: ["left", "right"], timeout: 1)
+    let recorder = GateRecorder()
+
+    gate.arrive(participant: "left") { recorder.record("left") }
+    #expect(recorder.values.isEmpty)
+    gate.arrive(participant: "right") { recorder.record("right") }
+
+    #expect(Set(recorder.values) == Set(["left", "right"]))
+}
+
+@Test func stereoHTTPStartGateTimesOutInsteadOfBlockingOneStream() async {
+    let gate = TrackHTTPStartGate(participants: ["left", "right"], timeout: 0.01)
+    await withCheckedContinuation { continuation in
+        gate.arrive(participant: "left") { continuation.resume() }
+    }
+}
+
 @Test func parsesServiceDescriptionActionsOnly() throws {
     let xml = Data("""
     <scpd xmlns="urn:schemas-upnp-org:service-1-0">
@@ -136,7 +154,7 @@ func parsesHTTPRanges(input: String?, expected: ByteRange?) throws {
     #expect(fault.errorDescription == "Transition not available")
 }
 
-@Test func soapReadRetriesOneTimeoutButPlayIsNeverRetried() async throws {
+@Test func soapReadRetriesTransientFailuresButPlayIsNeverRetried() async throws {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [TimeoutURLProtocol.self]
     let controller = UPnPController(session: URLSession(configuration: configuration))
@@ -159,6 +177,21 @@ func parsesHTTPRanges(input: String?, expected: ByteRange?) throws {
     #expect(info.state == "PLAYING")
     #expect(TimeoutURLProtocol.requestCount == 2)
 
+    TimeoutURLProtocol.configure(
+        succeedAfter: 1,
+        responseBody: """
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+          <u:GetTransportInfoResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+            <CurrentTransportState>STOPPED</CurrentTransportState><CurrentTransportStatus>OK</CurrentTransportStatus><CurrentSpeed>1</CurrentSpeed>
+          </u:GetTransportInfoResponse>
+        </s:Body></s:Envelope>
+        """,
+        failureCode: .cannotConnectToHost
+    )
+    let recovered = try await controller.getTransportInfo(service: service)
+    #expect(recovered.state == "STOPPED")
+    #expect(TimeoutURLProtocol.requestCount == 2)
+
     TimeoutURLProtocol.configure(succeedAfter: nil, responseBody: "")
     await #expect(throws: URLError.self) {
         try await controller.play(service: service)
@@ -170,14 +203,20 @@ private final class TimeoutURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var succeedAfter: Int?
     nonisolated(unsafe) private static var responseBody = ""
+    nonisolated(unsafe) private static var failureCode: URLError.Code = .timedOut
     nonisolated(unsafe) private static var count = 0
 
     static var requestCount: Int { lock.withLock { count } }
 
-    static func configure(succeedAfter: Int?, responseBody: String) {
+    static func configure(
+        succeedAfter: Int?,
+        responseBody: String,
+        failureCode: URLError.Code = .timedOut
+    ) {
         lock.withLock {
             self.succeedAfter = succeedAfter
             self.responseBody = responseBody
+            self.failureCode = failureCode
             count = 0
         }
     }
@@ -190,7 +229,7 @@ private final class TimeoutURLProtocol: URLProtocol, @unchecked Sendable {
             return (Self.succeedAfter.map { Self.count > $0 } ?? false, Self.responseBody)
         }
         guard outcome.0 else {
-            client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+            client?.urlProtocol(self, didFailWithError: URLError(Self.lock.withLock { Self.failureCode }))
             return
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
@@ -199,4 +238,12 @@ private final class TimeoutURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+private final class GateRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [String] = []
+
+    var values: [String] { lock.withLock { storedValues } }
+    func record(_ value: String) { lock.withLock { storedValues.append(value) } }
 }

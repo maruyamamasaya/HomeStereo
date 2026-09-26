@@ -94,7 +94,7 @@ public final class RecoveryStore {
                 }
                 if index + 1 < policy.delays.count { try? await Task.sleep(for: delay) }
             }
-            state = .disconnected("SRS-HG1を再発見できませんでした。手動で再接続できます。")
+            state = .disconnected("スピーカーを再発見できませんでした。手動で再接続できます。")
         }
     }
 }

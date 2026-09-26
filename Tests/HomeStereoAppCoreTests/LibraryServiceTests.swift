@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import XCTest
 @testable import HomeStereoAppCore
@@ -22,6 +23,20 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertEqual(track.artworkData, artwork)
     }
 
+    func testITunesGenreAndReleaseDateMetadataAreExtracted() async {
+        let genre = AVMutableMetadataItem()
+        genre.identifier = .iTunesMetadataUserGenre
+        genre.value = "Classical" as NSString
+        let releaseDate = AVMutableMetadataItem()
+        releaseDate.identifier = .iTunesMetadataReleaseDate
+        releaseDate.value = "2025-09-26T00:00:00Z" as NSString
+
+        let values = await LibraryService.supplementalMetadataValues(from: [genre, releaseDate])
+
+        XCTAssertEqual(values.genre, "Classical")
+        XCTAssertEqual(values.releaseYear, 2025)
+    }
+
     func testScanFindsPlayableAudioAndSkipsUnreadableCandidates() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -38,6 +53,8 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertEqual(tracks.first?.title, "tone")
         XCTAssertEqual(tracks.first?.url, playable)
         XCTAssertGreaterThan(tracks.first?.duration ?? 0, 0.9)
+        XCTAssertEqual(tracks.first?.sampleRate, 8_000)
+        XCTAssertGreaterThan(tracks.first?.bitRate ?? 0, 0)
     }
 
     func testIdentityResolverRejectsSameSizeDifferentSongAndAmbiguousMetadata() {
