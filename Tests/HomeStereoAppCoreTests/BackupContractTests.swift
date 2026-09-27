@@ -11,6 +11,20 @@ final class BackupContractTests: XCTestCase {
         let second = try BackupCodec.encode(try BackupCodec.decode(first))
         XCTAssertEqual(first, second)
         XCTAssertEqual(decoded.schemaVersion, 1)
+        XCTAssertEqual(decoded.playlists.first?.kind, PlaylistKind.regular.rawValue)
+    }
+
+    func testBackupPlaylistKindRoundTripsAndLegacyDefaultsToRegular() throws {
+        let work = BackupPlaylist(
+            id: UUID(), name: "Work", createdAt: .distantPast, updatedAt: .distantPast,
+            kind: PlaylistKind.work.rawValue, tracks: []
+        )
+        let document = HomeStereoBackup(
+            exportedAt: .distantPast, appVersion: "1", playlists: [work], favorites: [],
+            playbackEvents: [], settings: BackupSettings(automaticLibraryUpdates: true)
+        )
+        let decoded = try BackupCodec.decode(BackupCodec.encode(document))
+        XCTAssertEqual(decoded.playlists.first?.kind, PlaylistKind.work.rawValue)
     }
 
     func testInvalidDocumentAndUnsupportedVersionAreRejectedWhole() throws {

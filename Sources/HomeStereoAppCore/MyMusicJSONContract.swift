@@ -21,17 +21,20 @@ public struct MyMusicLibraryTrackDTO: Codable, Equatable, Sendable {
     public let lastPlayedAt: Date?
     public let audioFingerprint: String?
     public let firstSeenAt: Date?
+    public let relativePath: String?
+    public let fileSize: Int64?
 
     public init(
         trackID: UUID, title: String, artist: String, album: String? = nil, genre: String? = nil,
         year: Int? = nil, duration: Double, format: String? = nil, favorite: Bool? = nil,
         playCount: Int? = nil, lastPlayedAt: Date? = nil, audioFingerprint: String? = nil,
-        firstSeenAt: Date? = nil
+        firstSeenAt: Date? = nil, relativePath: String? = nil, fileSize: Int64? = nil
     ) {
         self.trackID = trackID; self.title = title; self.artist = artist; self.album = album
         self.genre = genre; self.year = year; self.duration = duration; self.format = format
         self.favorite = favorite; self.playCount = playCount; self.lastPlayedAt = lastPlayedAt
         self.audioFingerprint = audioFingerprint; self.firstSeenAt = firstSeenAt
+        self.relativePath = relativePath; self.fileSize = fileSize
     }
 }
 
@@ -93,6 +96,53 @@ public struct MyMusicPlaybackEventDTO: Codable, Equatable, Sendable {
     }
 }
 
+public struct MyMusicPlaylistTrackDTO: Codable, Equatable, Sendable {
+    public let trackID: UUID
+    public let title: String?
+    public let artist: String?
+    public let album: String?
+    public let duration: Double?
+
+    public init(
+        trackID: UUID, title: String? = nil, artist: String? = nil,
+        album: String? = nil, duration: Double? = nil
+    ) {
+        self.trackID = trackID; self.title = title; self.artist = artist
+        self.album = album; self.duration = duration
+    }
+}
+
+public struct MyMusicPlaylistDTO: Codable, Equatable, Sendable {
+    public static let currentVersion = 1
+    public let version: Int
+    public let name: String
+    public let playlistID: UUID
+    public let createdAt: Date
+    public let updatedAt: Date
+    public let kind: String
+    public let tags: [String]
+    public let tracks: [MyMusicPlaylistTrackDTO]
+
+    public init(
+        version: Int = currentVersion, name: String, playlistID: UUID,
+        createdAt: Date, updatedAt: Date, kind: String = "regular",
+        tags: [String] = [], tracks: [MyMusicPlaylistTrackDTO]
+    ) {
+        self.version = version; self.name = name; self.playlistID = playlistID
+        self.createdAt = createdAt; self.updatedAt = updatedAt; self.kind = kind
+        self.tags = tags; self.tracks = tracks
+    }
+}
+
+public struct MyMusicPlaylistsDocumentDTO: Codable, Equatable, Sendable {
+    public static let currentVersion = 1
+    public let version: Int
+    public let playlists: [MyMusicPlaylistDTO]
+    public init(version: Int = currentVersion, playlists: [MyMusicPlaylistDTO]) {
+        self.version = version; self.playlists = playlists
+    }
+}
+
 public enum MyMusicJSONContractError: LocalizedError, Equatable, Sendable {
     case invalidStructure(String)
     case unsupportedVersion(Int)
@@ -109,6 +159,7 @@ public enum MyMusicJSONCodec {
     public static let libraryFileName = "MyMusic-Library.json"
     public static let preferencesFileName = "MyMusic-Playback-Preferences.json"
     public static let playbackEventsFileName = "MyMusic-Playback-Events.json"
+    public static let playlistsFileName = "MyMusic-Playlists.json"
 
     public static func decodeLibrary(_ data: Data) throws -> MyMusicLibraryDocumentDTO {
         let value: MyMusicLibraryDocumentDTO = try decode(data)
@@ -128,6 +179,23 @@ public enum MyMusicJSONCodec {
         return value
     }
 
+    public static func decodePlaylists(_ data: Data) throws -> MyMusicPlaylistsDocumentDTO {
+        guard !data.contains(0), String(data: data, encoding: .utf8) != nil else {
+            throw invalid("文字コードはUTF-8が必要")
+        }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw invalid("JSONの構文が不正")
+        }
+        let value: MyMusicPlaylistsDocumentDTO
+        if root["playlists"] != nil {
+            value = try decode(data)
+        } else {
+            value = MyMusicPlaylistsDocumentDTO(playlists: [try decode(data) as MyMusicPlaylistDTO])
+        }
+        try validate(value)
+        return value
+    }
+
     public static func encodeLibrary(_ value: MyMusicLibraryDocumentDTO) throws -> Data {
         try validate(value); return try encode(value)
     }
@@ -138,6 +206,14 @@ public enum MyMusicJSONCodec {
 
     public static func encodePlaybackEvents(_ value: MyMusicPlaybackEventsDocumentDTO) throws -> Data {
         try validate(value); return try encode(value)
+    }
+
+    public static func encodePlaylists(_ value: MyMusicPlaylistsDocumentDTO) throws -> Data {
+        try validate(value); return try encode(value)
+    }
+
+    public static func encodePlaylist(_ value: MyMusicPlaylistDTO) throws -> Data {
+        try validate(MyMusicPlaylistsDocumentDTO(playlists: [value])); return try encode(value)
     }
 
     public static func validate(_ value: MyMusicLibraryDocumentDTO) throws {
@@ -151,6 +227,10 @@ public enum MyMusicJSONCodec {
             guard track.format.map(supportedFormats.contains) ?? true else { throw invalid("未対応のformat") }
             guard track.audioFingerprint.map(isLowercaseSHA256) ?? true else {
                 throw invalid("audioFingerprintは64文字のlowercase SHA-256が必要")
+            }
+            guard track.fileSize.map({ $0 >= 0 }) ?? true else { throw invalid("fileSizeは0以上が必要") }
+            guard track.relativePath.map(isSafeRelativePath) ?? true else {
+                throw invalid("relativePathは選択した音楽ルート以下の相対パスが必要")
             }
         }
     }
@@ -185,6 +265,29 @@ public enum MyMusicJSONCodec {
         }
     }
 
+    public static func validate(_ value: MyMusicPlaylistsDocumentDTO) throws {
+        guard value.version == MyMusicPlaylistsDocumentDTO.currentVersion else {
+            throw MyMusicJSONContractError.unsupportedVersion(value.version)
+        }
+        guard Set(value.playlists.map(\.playlistID)).count == value.playlists.count else {
+            throw invalid("playlistIDが重複")
+        }
+        for playlist in value.playlists {
+            guard playlist.version == MyMusicPlaylistDTO.currentVersion else {
+                throw MyMusicJSONContractError.unsupportedVersion(playlist.version)
+            }
+            guard !playlist.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw invalid("プレイリスト名が空")
+            }
+            guard !playlist.kind.isEmpty else { throw invalid("kindが空") }
+            for track in playlist.tracks {
+                guard track.duration.map({ $0.isFinite && $0 >= 0 }) ?? true else {
+                    throw invalid("durationは0以上の有限値が必要")
+                }
+            }
+        }
+    }
+
     private static let supportedFormats: Set<String> = ["FLAC", "ALAC", "AAC", "MP3", "WAV", "AIFF"]
     private static let selectionTypes: Set<String> = ["manual", "user_advanced", "automatic"]
     private static let playSources: Set<String> = [
@@ -195,6 +298,18 @@ public enum MyMusicJSONCodec {
     private static func invalid(_ reason: String) -> MyMusicJSONContractError { .invalidStructure(reason) }
     private static func isLowercaseSHA256(_ value: String) -> Bool {
         value.count == 64 && value.unicodeScalars.allSatisfy { (48...57).contains($0.value) || (97...102).contains($0.value) }
+    }
+    public static func normalizedRelativePath(_ value: String) -> String? {
+        guard isSafeRelativePath(value) else { return nil }
+        return value.split(separator: "/", omittingEmptySubsequences: false)
+            .map(String.init).joined(separator: "/").precomposedStringWithCanonicalMapping
+    }
+
+    private static func isSafeRelativePath(_ value: String) -> Bool {
+        guard !value.isEmpty, !value.hasPrefix("/"), !value.hasPrefix("\\"),
+              !value.contains("\\"), !value.hasPrefix("./") else { return false }
+        let components = value.split(separator: "/", omittingEmptySubsequences: false)
+        return components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
     private static func decode<T: Decodable>(_ data: Data) throws -> T {

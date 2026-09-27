@@ -96,6 +96,7 @@ public protocol LibraryPersisting: Sendable {
     func applySuccessfulScan(folderID: UUID, tracks: [Track], scannedAt: Date) async throws
     func loadQueue() async throws -> QueueSnapshot
     func saveQueue(_ snapshot: QueueSnapshot) async throws
+    func saveQueuePosition(_ position: TimeInterval) async throws
     func loadPlaylists() async throws -> [Playlist]
     func savePlaylist(_ playlist: Playlist) async throws
     func deletePlaylist(id: UUID) async throws

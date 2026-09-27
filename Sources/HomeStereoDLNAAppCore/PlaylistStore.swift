@@ -21,6 +21,14 @@ public final class PlaylistStore {
 
     public var selectedPlaylist: Playlist? { playlists.first { $0.id == selectedPlaylistID } }
 
+    public func playlists(of kind: PlaylistKind) -> [Playlist] {
+        playlists.filter { $0.playlistKind == kind }
+    }
+
+    public func selectedPlaylist(of kind: PlaylistKind) -> Playlist? {
+        selectedPlaylist.flatMap { $0.playlistKind == kind ? $0 : nil }
+    }
+
     public init(repository: any LibraryPersisting, library: LibraryStore, queue: QueueStore, files: any PlaylistFileServicing) {
         self.repository = repository; self.library = library; self.queue = queue; self.files = files
     }
@@ -30,10 +38,10 @@ public final class PlaylistStore {
         catch { message = error.localizedDescription }
     }
 
-    public func create(name: String) async {
+    public func create(name: String, kind: PlaylistKind = .regular) async {
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
-        let playlist = Playlist(name: value)
+        let playlist = Playlist(name: value, kind: kind.rawValue)
         do {
             try await repository.savePlaylist(playlist)
             await load()
@@ -72,7 +80,13 @@ public final class PlaylistStore {
 
     public func add(trackIDs: [Track.ID], to playlistID: UUID) async {
         guard var playlist = playlists.first(where: { $0.id == playlistID }) else { return }
-        playlist.items.append(contentsOf: trackIDs.map { PlaylistItem(trackID: $0) })
+        let accepted = compatibleTrackIDs(trackIDs, with: playlist.playlistKind)
+        guard !accepted.isEmpty else {
+            if !trackIDs.isEmpty { message = incompatibleTracksMessage(for: playlist.playlistKind) }
+            return
+        }
+        playlist.items.append(contentsOf: accepted.map { PlaylistItem(trackID: $0) })
+        if accepted.count != trackIDs.count { message = incompatibleTracksMessage(for: playlist.playlistKind) }
         playlist.updatedAt = .now; await save(playlist)
     }
 
@@ -95,7 +109,7 @@ public final class PlaylistStore {
 
     public func play(_ playlist: Playlist, shuffled: Bool) async {
         var ids: [Track.ID] = playlist.items.compactMap { item in
-            guard let track = library.tracks.first(where: { $0.id == item.trackID }), track.scanState == .available else { return nil }
+            guard let track = library.track(id: item.trackID), track.scanState == .available else { return nil }
             return track.id
         }
         if shuffled { ids.shuffle() }
@@ -109,14 +123,23 @@ public final class PlaylistStore {
     public func playNext(trackIDs: [Track.ID]) async { await queue.playNext(trackIDs: trackIDs) }
     public func appendToQueue(trackIDs: [Track.ID]) async { await queue.append(trackIDs: trackIDs) }
 
-    public func importM3U8() async {
+    public func importM3U8(kind: PlaylistKind = .regular) async {
         guard let url = files.chooseImportURL() else { return }
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
             let result = Self.parseM3U8(text, tracks: library.tracks)
-            let playlist = Playlist(name: url.deletingPathExtension().lastPathComponent, items: result.trackIDs.map { PlaylistItem(trackID: $0) })
+            let accepted = compatibleTrackIDs(result.trackIDs, with: kind)
+            let playlist = Playlist(
+                name: url.deletingPathExtension().lastPathComponent,
+                kind: kind.rawValue,
+                items: accepted.map { PlaylistItem(trackID: $0) }
+            )
             try await repository.savePlaylist(playlist)
-            lastImportResult = result.summary
+            lastImportResult = M3U8ImportResult(
+                imported: accepted.count,
+                unresolved: result.summary.unresolved,
+                ambiguous: result.summary.ambiguous
+            )
             await load()
             selectedPlaylistID = playlist.id
             selectedPlaylistIDs = [playlist.id]
@@ -129,7 +152,24 @@ public final class PlaylistStore {
         catch { message = error.localizedDescription }
     }
 
-    public func track(for item: PlaylistItem) -> Track? { library.tracks.first { $0.id == item.trackID } }
+    public func track(for item: PlaylistItem) -> Track? { library.track(id: item.trackID) }
+    public func canAdd(trackIDs: [Track.ID], to playlistID: Playlist.ID) -> Bool {
+        guard let playlist = playlists.first(where: { $0.id == playlistID }) else { return false }
+        return compatibleTrackIDs(trackIDs, with: playlist.playlistKind).count == trackIDs.count
+    }
+
+    public func compatiblePlaylists(for trackIDs: [Track.ID]) -> [Playlist] {
+        playlists.filter { canAdd(trackIDs: trackIDs, to: $0.id) }
+    }
+
+    public func activate(_ kind: PlaylistKind) {
+        let visibleIDs = Set(playlists(of: kind).map(\.id))
+        selectedPlaylistIDs.formIntersection(visibleIDs)
+        if let selectedPlaylistID, !visibleIDs.contains(selectedPlaylistID) {
+            self.selectedPlaylistID = nil
+            selectedItemIDs = []
+        }
+    }
     public func dismissMessage() { message = nil; lastImportResult = nil }
 
     public nonisolated static func makeM3U8(playlist: Playlist, tracks: [Track]) -> String {
@@ -159,5 +199,19 @@ public final class PlaylistStore {
     private func save(_ playlist: Playlist) async {
         do { try await repository.savePlaylist(playlist); await load(); selectedPlaylistID = playlist.id }
         catch { message = error.localizedDescription }
+    }
+
+    private func compatibleTrackIDs(_ trackIDs: [Track.ID], with kind: PlaylistKind) -> [Track.ID] {
+        trackIDs.filter { id in
+            guard let track = library.track(id: id) else { return false }
+            return kind.accepts(track)
+        }
+    }
+
+    private func incompatibleTracksMessage(for kind: PlaylistKind) -> String {
+        switch kind {
+        case .regular: "作業用BGMの曲は通常プレイリストへ追加できません。"
+        case .work: "ジャンルが「作業用BGM」の曲だけを作業用プレイリストへ追加できます。"
+        }
     }
 }

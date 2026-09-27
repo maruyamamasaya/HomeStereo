@@ -47,6 +47,7 @@ public struct LibraryService: LibraryScanning {
         var scanned: [Track] = []
         var discoveredKeys = Set<String>()
         var matchedExistingIDs = Set<Track.ID>()
+        var lastProgressUpdate = ContinuousClock.now
 
         for candidate in candidates.sorted(by: { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }) {
             try Task.checkCancellation()
@@ -115,7 +116,12 @@ public struct LibraryService: LibraryScanning {
                 }
             }
             progress.analyzed += 1
-            await progressHandler(progress)
+            let progressUpdate = ContinuousClock.now
+            if progress.analyzed.isMultiple(of: 100)
+                || lastProgressUpdate.duration(to: progressUpdate) >= .milliseconds(250) {
+                await progressHandler(progress)
+                lastProgressUpdate = progressUpdate
+            }
         }
 
         for previous in existingTracks where
@@ -203,67 +209,119 @@ public struct LibraryService: LibraryScanning {
             let bitRate = loadedBitRate > 0 ? loadedBitRate : pcmBitRate
             var formatMetadata: [AVMetadataItem] = []
             for format in formats { formatMetadata += (try? await asset.loadMetadata(for: format)) ?? [] }
-            var title: String?, artist: String?, albumArtist: String?, album: String?, genre: String?
-            var releaseYear: Int?
-            var hasArtwork = false
-            for item in metadata {
-                switch item.commonKey {
-                case .commonKeyTitle: title = try? await item.load(.stringValue)
-                case .commonKeyArtist: artist = try? await item.load(.stringValue)
-                case .commonKeyAlbumName: album = try? await item.load(.stringValue)
-                case .commonKeyCreationDate:
-                    releaseYear = Self.metadataYear(from: try? await item.load(.stringValue))
-                case .commonKeyArtwork: hasArtwork = true
-                default: break
-                }
-            }
-            let supplemental = await Self.supplementalMetadataValues(from: formatMetadata)
-            albumArtist = supplemental.albumArtist
-            genre = supplemental.genre
-            if releaseYear == nil { releaseYear = supplemental.releaseYear }
+            // FLAC/Vorbis comments are exposed through their format-specific collection on macOS,
+            // while commonMetadata can be empty. Normalize both collections so every supported
+            // container follows the same mapping.
+            let values = await Self.metadataValues(from: metadata + formatMetadata)
             return Track(
                 id: existingID ?? UUID(), libraryFolderID: folderID, relativePath: relativePath,
                 url: url, fileSize: fileSize, modificationDate: modificationDate,
                 fileResourceIdentifier: fileResourceIdentifier,
-                title: title?.nilIfBlank ?? url.deletingPathExtension().lastPathComponent,
-                artist: artist?.nilIfBlank, albumArtist: albumArtist?.nilIfBlank,
-                album: album?.nilIfBlank, genre: genre?.nilIfBlank, releaseYear: releaseYear, duration: duration,
+                title: values.title ?? url.deletingPathExtension().lastPathComponent,
+                artist: values.artist, albumArtist: values.albumArtist,
+                album: values.album, genre: values.genre, composer: values.composer,
+                releaseYear: values.releaseYear, trackNumber: values.trackNumber, trackTotal: values.trackTotal,
+                discNumber: values.discNumber, discTotal: values.discTotal, duration: duration,
                 codec: basicDescription.map { String(format: "%08X", $0.pointee.mFormatID) },
                 sampleRate: basicDescription?.pointee.mSampleRate,
                 bitRate: bitRate,
                 bitDepth: basicDescription.map { Int($0.pointee.mBitsPerChannel) },
                 channelCount: basicDescription.map { Int($0.pointee.mChannelsPerFrame) },
-                hasArtwork: hasArtwork, artworkData: nil, lastScannedAt: scannedAt
+                hasArtwork: values.hasArtwork, artworkData: nil, lastScannedAt: scannedAt
             )
         } catch { return nil }
+    }
+
+    struct MetadataValues: Equatable {
+        var title: String?
+        var artist: String?
+        var albumArtist: String?
+        var album: String?
+        var genre: String?
+        var composer: String?
+        var releaseYear: Int?
+        var trackNumber: Int?
+        var trackTotal: Int?
+        var discNumber: Int?
+        var discTotal: Int?
+        var hasArtwork = false
+    }
+
+    static func metadataValues(from metadata: [AVMetadataItem]) async -> MetadataValues {
+        var result = MetadataValues()
+        for item in metadata {
+            if item.commonKey == .commonKeyArtwork {
+                result.hasArtwork = true
+                continue
+            }
+            let value = (try? await item.load(.stringValue))?.nilIfBlank
+            let key = Self.normalizedMetadataKey(item.identifier?.rawValue)
+            if result.albumArtist == nil,
+               (item.identifier == .iTunesMetadataAlbumArtist || item.identifier == .id3MetadataBand) {
+                result.albumArtist = value
+            }
+            if result.genre == nil, item.identifier == .iTunesMetadataUserGenre {
+                result.genre = value
+            }
+            if result.releaseYear == nil, item.identifier == .iTunesMetadataReleaseDate {
+                result.releaseYear = Self.metadataYear(from: value)
+            }
+            switch item.commonKey {
+            case .commonKeyTitle where result.title == nil: result.title = value
+            case .commonKeyArtist where result.artist == nil: result.artist = value
+            case .commonKeyAlbumName where result.album == nil: result.album = value
+            case .commonKeyCreationDate where result.releaseYear == nil:
+                result.releaseYear = Self.metadataYear(from: value)
+            default: break
+            }
+
+            switch key {
+            case "TITLE" where result.title == nil: result.title = value
+            case "ARTIST" where result.artist == nil: result.artist = value
+            case "ALBUM" where result.album == nil: result.album = value
+            case "ALBUMARTIST", "BAND":
+                if result.albumArtist == nil { result.albumArtist = value }
+            case "GENRE", "TCON":
+                if result.genre == nil { result.genre = value }
+            case "COMPOSER" where result.composer == nil: result.composer = value
+            case "DATE", "YEAR", "RELEASEDATE", "ORIGINALDATE", "TYER", "TDRC", "TDOR", "DAY":
+                if result.releaseYear == nil { result.releaseYear = Self.metadataYear(from: value) }
+            case "TRACKNUMBER", "TRACK", "TRCK":
+                let pair = Self.metadataNumberPair(from: value)
+                if result.trackNumber == nil { result.trackNumber = pair.number }
+                if result.trackTotal == nil { result.trackTotal = pair.total }
+            case "TRACKTOTAL", "TOTALTRACKS":
+                if result.trackTotal == nil { result.trackTotal = Self.metadataNumberPair(from: value).number }
+            case "DISCNUMBER", "DISC", "TPOS":
+                let pair = Self.metadataNumberPair(from: value)
+                if result.discNumber == nil { result.discNumber = pair.number }
+                if result.discTotal == nil { result.discTotal = pair.total }
+            case "DISCTOTAL", "TOTALDISCS":
+                if result.discTotal == nil { result.discTotal = Self.metadataNumberPair(from: value).number }
+            case "METADATABLOCKPICTURE", "COVERART": result.hasArtwork = true
+            default: break
+            }
+        }
+        return result
     }
 
     static func supplementalMetadataValues(
         from metadata: [AVMetadataItem]
     ) async -> (albumArtist: String?, genre: String?, releaseYear: Int?) {
-        var albumArtist: String?, genre: String?, releaseYear: Int?
-        for item in metadata {
-            let identifier = item.identifier?.rawValue.lowercased() ?? ""
-            let value = try? await item.load(.stringValue)
-            if albumArtist == nil,
-               (item.identifier == .iTunesMetadataAlbumArtist || item.identifier == .id3MetadataBand) {
-                albumArtist = value
-            }
-            if genre == nil,
-               (item.identifier == .iTunesMetadataUserGenre
-                || (identifier.contains("genre") && !identifier.contains("predefined") && !identifier.contains("genreid"))
-                || identifier.contains("tcon")) {
-                genre = value
-            }
-            if releaseYear == nil,
-               (item.identifier == .iTunesMetadataReleaseDate
-                || identifier.contains("releasedate") || identifier.hasSuffix("year")
-                || identifier.contains("tyer") || identifier.contains("tdrc")
-                || identifier.contains("tdor") || identifier.contains("©day")) {
-                releaseYear = Self.metadataYear(from: value)
-            }
-        }
-        return (albumArtist?.nilIfBlank, genre?.nilIfBlank, releaseYear)
+        let values = await metadataValues(from: metadata)
+        return (values.albumArtist, values.genre, values.releaseYear)
+    }
+
+    private static func normalizedMetadataKey(_ identifier: String?) -> String {
+        guard let identifier else { return "" }
+        let leaf = identifier.split(separator: "/").last.map(String.init) ?? identifier
+        return String(leaf.uppercased().filter { $0.isLetter || $0.isNumber })
+    }
+
+    private static func metadataNumberPair(from value: String?) -> (number: Int?, total: Int?) {
+        guard let value else { return (nil, nil) }
+        let numbers = value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        return (numbers.first, numbers.dropFirst().first)
     }
 
     private static func metadataYear(from value: String?) -> Int? {

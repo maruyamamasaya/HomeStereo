@@ -59,6 +59,14 @@
 		C1000000000000000000001A /* BackupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000001A /* BackupView.swift */; };
 		C1000000000000000000001B /* MyMusicTransferStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000001B /* MyMusicTransferStore.swift */; };
 		C1000000000000000000001C /* MyMusicTransferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000001C /* MyMusicTransferView.swift */; };
+		A1000000000000000000001A /* AnalyticsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000022 /* AnalyticsModels.swift */; };
+		A1000000000000000000001B /* AnalyticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000023 /* AnalyticsService.swift */; };
+		C1000000000000000000001D /* AnalyticsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000001D /* AnalyticsStore.swift */; };
+		C1000000000000000000001E /* AnalyticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000001E /* AnalyticsView.swift */; };
+		C1000000000000000000001F /* HomeStereoTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000001F /* HomeStereoTheme.swift */; };
+		D10000000000000000000001 /* GenreDisplayPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* GenreDisplayPreset.swift */; };
+		D10000000000000000000002 /* GenreDisplayPresetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* GenreDisplayPresetStore.swift */; };
+		D10000000000000000000003 /* GenreDisplayPresetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* GenreDisplayPresetsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -117,6 +125,14 @@
 		C2000000000000000000001A /* BackupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupView.swift; sourceTree = "<group>"; };
 		C2000000000000000000001B /* MyMusicTransferStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyMusicTransferStore.swift; sourceTree = "<group>"; };
 		C2000000000000000000001C /* MyMusicTransferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyMusicTransferView.swift; sourceTree = "<group>"; };
+		A20000000000000000000022 /* AnalyticsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsModels.swift; sourceTree = "<group>"; };
+		A20000000000000000000023 /* AnalyticsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsService.swift; sourceTree = "<group>"; };
+		C2000000000000000000001D /* AnalyticsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsStore.swift; sourceTree = "<group>"; };
+		C2000000000000000000001E /* AnalyticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsView.swift; sourceTree = "<group>"; };
+		C2000000000000000000001F /* HomeStereoTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeStereoTheme.swift; sourceTree = "<group>"; };
+		D20000000000000000000001 /* GenreDisplayPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreDisplayPreset.swift; sourceTree = "<group>"; };
+		D20000000000000000000002 /* GenreDisplayPresetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreDisplayPresetStore.swift; sourceTree = "<group>"; };
+		D20000000000000000000003 /* GenreDisplayPresetsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreDisplayPresetsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -165,6 +181,9 @@
 				A20000000000000000000019 /* MyMusicPersistenceService.swift */,
 				A20000000000000000000020 /* MyMusicPlaybackSession.swift */,
 				A20000000000000000000021 /* MyMusicTransferService.swift */,
+				A20000000000000000000022 /* AnalyticsModels.swift */,
+				A20000000000000000000023 /* AnalyticsService.swift */,
+				D20000000000000000000001 /* GenreDisplayPreset.swift */,
 			);
 			path = Sources/HomeStereoAppCore;
 			sourceTree = SOURCE_ROOT;
@@ -216,6 +235,8 @@
 				C20000000000000000000018 /* RecoveryStore.swift */,
 				C20000000000000000000019 /* BackupStore.swift */,
 				C2000000000000000000001B /* MyMusicTransferStore.swift */,
+				C2000000000000000000001D /* AnalyticsStore.swift */,
+				D20000000000000000000002 /* GenreDisplayPresetStore.swift */,
 			);
 			path = Sources/HomeStereoDLNAAppCore;
 			sourceTree = SOURCE_ROOT;
@@ -232,6 +253,9 @@
 				C20000000000000000000017 /* MenuBarPlaybackView.swift */,
 				C2000000000000000000001A /* BackupView.swift */,
 				C2000000000000000000001C /* MyMusicTransferView.swift */,
+				C2000000000000000000001E /* AnalyticsView.swift */,
+				C2000000000000000000001F /* HomeStereoTheme.swift */,
+				D20000000000000000000003 /* GenreDisplayPresetsView.swift */,
 			);
 			path = Sources/HomeStereoDLNAApp;
 			sourceTree = SOURCE_ROOT;
@@ -311,6 +335,9 @@
 				A10000000000000000000017 /* MyMusicPersistenceService.swift in Sources */,
 				A10000000000000000000018 /* MyMusicPlaybackSession.swift in Sources */,
 				A10000000000000000000019 /* MyMusicTransferService.swift in Sources */,
+				A1000000000000000000001A /* AnalyticsModels.swift in Sources */,
+				A1000000000000000000001B /* AnalyticsService.swift in Sources */,
+				D10000000000000000000001 /* GenreDisplayPreset.swift in Sources */,
 				C10000000000000000000001 /* Models.swift in Sources */,
 				C10000000000000000000002 /* Discovery.swift in Sources */,
 				C10000000000000000000003 /* DeviceDescriptionParser.swift in Sources */,
@@ -330,6 +357,8 @@
 				C10000000000000000000018 /* RecoveryStore.swift in Sources */,
 				C10000000000000000000019 /* BackupStore.swift in Sources */,
 				C1000000000000000000001B /* MyMusicTransferStore.swift in Sources */,
+				C1000000000000000000001D /* AnalyticsStore.swift in Sources */,
+				D10000000000000000000002 /* GenreDisplayPresetStore.swift in Sources */,
 				C1000000000000000000000B /* HomeStereoDLNAApp.swift in Sources */,
 				C1000000000000000000000C /* DLNAContentView.swift in Sources */,
 				C1000000000000000000000E /* LibraryViews.swift in Sources */,
@@ -339,6 +368,9 @@
 				C10000000000000000000017 /* MenuBarPlaybackView.swift in Sources */,
 				C1000000000000000000001A /* BackupView.swift in Sources */,
 				C1000000000000000000001C /* MyMusicTransferView.swift in Sources */,
+				C1000000000000000000001E /* AnalyticsView.swift in Sources */,
+				C1000000000000000000001F /* HomeStereoTheme.swift in Sources */,
+				D10000000000000000000003 /* GenreDisplayPresetsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

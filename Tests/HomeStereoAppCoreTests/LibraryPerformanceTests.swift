@@ -3,9 +3,9 @@ import XCTest
 @testable import HomeStereoAppCore
 
 final class LibraryPerformanceTests: XCTestCase {
-    func testTwentyThousandTrackMetadataFixture() async throws {
+    func testThirtyThousandTrackMetadataFixture() async throws {
         guard ProcessInfo.processInfo.environment["HOMESTEREO_RUN_PERFORMANCE"] == "1" else {
-            throw XCTSkip("Set HOMESTEREO_RUN_PERFORMANCE=1 to run the 20k fixture.")
+            throw XCTSkip("Set HOMESTEREO_RUN_PERFORMANCE=1 to run the 30k fixture.")
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -14,7 +14,7 @@ final class LibraryPerformanceTests: XCTestCase {
         let repository = try SQLiteLibraryRepository(databaseURL: databaseURL)
         let folder = LibraryFolder(displayName: "Synthetic", path: root.path)
         try await repository.addFolder(folder, bookmarkData: Data([1]))
-        let fixture = (0..<20_000).map { index in
+        let fixture = (0..<30_000).map { index in
             Track(
                 id: deterministicUUID(index), libraryFolderID: folder.id,
                 relativePath: String(format: "Artist%03d/Album%04d/Track%05d.mp3", index % 400, index % 2_000, index),
@@ -29,13 +29,28 @@ final class LibraryPerformanceTests: XCTestCase {
         let load = try await elapsed { _ = try await repository.loadTracks(folderID: nil) }
         let unchanged = try await elapsed { try await repository.applySuccessfulScan(folderID: folder.id, tracks: fixture, scannedAt: .now) }
         let loaded = try await repository.loadTracks(folderID: nil)
+        let browseStart = ContinuousClock.now
+        let browser = LibraryBrowserIndex(tracks: loaded, sort: .title)
+        let browse = seconds(browseStart.duration(to: .now))
+        let sortStart = ContinuousClock.now
+        _ = LibraryBrowserIndex(tracks: loaded, sort: .artist, buildCollections: false)
+        let trackSort = seconds(sortStart.duration(to: .now))
+        let base = LibraryBrowserBase(tracks: loaded, sort: .title)
+        let filterStart = ContinuousClock.now
+        _ = LibraryBrowserIndex(base: base, genre: "Genre 1", buildCollections: false)
+        let filter = seconds(filterStart.duration(to: .now))
+        let clearFilterStart = ContinuousClock.now
+        let cleared = LibraryBrowserIndex(base: base, buildCollections: false)
+        let clearFilter = seconds(clearFilterStart.duration(to: .now))
         let searchStart = ContinuousClock.now
         _ = LibraryBrowserIndex(tracks: loaded, search: "Track 199", sort: .title)
         let search = seconds(searchStart.duration(to: .now))
         let attributes = try FileManager.default.attributesOfItem(atPath: databaseURL.path)
         let databaseBytes = attributes[.size] as? Int64 ?? 0
-        print("PERF20K initial=\(initial) unchanged=\(unchanged) load=\(load) search=\(search) dbBytes=\(databaseBytes)")
-        XCTAssertEqual(loaded.count, 20_000)
+        print("PERF30K initial=\(initial) unchanged=\(unchanged) load=\(load) browse=\(browse) trackSort=\(trackSort) filter=\(filter) clearFilter=\(clearFilter) search=\(search) dbBytes=\(databaseBytes)")
+        XCTAssertEqual(loaded.count, 30_000)
+        XCTAssertEqual(browser.tracks.count, 30_000)
+        XCTAssertEqual(cleared.tracks.count, 30_000)
     }
 
     private func elapsed(_ operation: () async throws -> Void) async throws -> Double {

@@ -5,6 +5,11 @@
 Primary: `Sources/HomeStereoDLNAApp/`
 Keywords: `HomeStereoDLNAApp`, `DLNAContentView`, `DevicesView`, `PlaybackView`, `keyboardShortcut`
 
+## Theme and Appearance
+
+Primary: `Sources/HomeStereoDLNAApp/HomeStereoTheme.swift`, `HomeStereoDLNAApp.swift`
+Keywords: `HomeStereoTheme`, `HomeStereoThemeRoot`, `HomeStereoThemeSettingsView`, `appearance.theme`, `CommandMenu("表示")`
+
 ## State and Services
 
 Primary: `Sources/HomeStereoDLNAAppCore/`
@@ -23,6 +28,12 @@ Primary: `Sources/HomeStereoAppCore/LibraryBrowser.swift`, `Sources/HomeStereoDL
 Keywords: `LibraryBrowserIndex`, `LibraryAlbum.ID`, `LibraryArtist`, `LibrarySort`, `CachedArtwork`
 Tests: `Tests/HomeStereoAppCoreTests/LibraryBrowserTests.swift`
 
+## Genre Display Presets
+
+Primary: `Sources/HomeStereoAppCore/GenreDisplayPreset.swift`, `LibraryRepository.swift`, `LibraryBrowser.swift`, `Sources/HomeStereoDLNAAppCore/GenreDisplayPresetStore.swift`, `LibraryStore.swift`, `Sources/HomeStereoDLNAApp/GenreDisplayPresetsView.swift`, `LibraryViews.swift`
+Keywords: `mymusic.genre-display-presets`, `GenreDisplayPreset`, `genre_display_presets`, `selectedGenrePresetID`, `MyMusic-Genre-Display-Presets.json`
+Tests: `Tests/HomeStereoAppCoreTests/GenreDisplayPresetTests.swift`, `LibraryBrowserTests.swift`
+
 ## Queue and Continuous Playback
 
 Primary: `Sources/HomeStereoAppCore/QueueModels.swift`, `Sources/HomeStereoDLNAAppCore/QueueStore.swift`, `RendererPlaybackStore.swift`, `Sources/HomeStereoDLNAApp/QueueView.swift`
@@ -32,7 +43,7 @@ Tests: `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 ## Playlists and M3U8
 
 Primary: `Sources/HomeStereoAppCore/PlaylistModels.swift`, `Sources/HomeStereoDLNAAppCore/PlaylistStore.swift`, `Sources/HomeStereoDLNAApp/PlaylistsView.swift`
-Keywords: `Playlist`, `PlaylistItem`, `savePlaylist`, `parseM3U8`, `M3U8ImportResult`
+Keywords: `Playlist`, `PlaylistKind`, `workPlaylists`, `workPlaybackGenre`, `savePlaylist`, `parseM3U8`, `M3U8ImportResult`
 Tests: `Tests/HomeStereoAppCoreTests/PlaylistPersistenceTests.swift`, `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
 ## Favorites and Playback History
@@ -40,6 +51,12 @@ Tests: `Tests/HomeStereoAppCoreTests/PlaylistPersistenceTests.swift`, `Tests/Hom
 Primary: `Sources/HomeStereoAppCore/ListeningModels.swift`, `Sources/HomeStereoDLNAAppCore/ListeningStore.swift`, `Sources/HomeStereoDLNAApp/ListeningView.swift`
 Keywords: `Favorite`, `PlaybackEvent`, `playedSeconds`, `onTrackEnded`, `frequentTracks`
 Tests: `Tests/HomeStereoAppCoreTests/ListeningPersistenceTests.swift`
+
+## Local Playback Analytics
+
+Primary: `Sources/HomeStereoAppCore/AnalyticsModels.swift`, `AnalyticsService.swift`, `MyMusicPlaybackSession.swift`, `LibraryRepository.swift`, `Sources/HomeStereoDLNAAppCore/AnalyticsStore.swift`, `ListeningStore.swift`, `Sources/HomeStereoDLNAApp/AnalyticsView.swift`, `docs/playback-analytics.md`
+Keywords: `AnalyticsSnapshot`, `AnalyticsPersisting`, `TrackPreference`, `PlaybackAnalyticsEndKind`, `playback_track_summaries`, `playback_daily_summaries`, `playback_source_summaries`
+Tests: `Tests/HomeStereoAppCoreTests/AnalyticsServiceTests.swift`, `MyMusicPlaybackSessionTests.swift`, `MyMusicPersistenceTests.swift`, `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
 ## macOS Playback Integration
 
@@ -67,7 +84,7 @@ Tests: `Tests/HomeStereoAppCoreTests/BackupContractTests.swift`, `Tests/Fixtures
 ## MyMusic JSON Interchange
 
 Primary: `Sources/HomeStereoAppCore/MyMusicJSONContract.swift`, `MyMusicInterchangeModels.swift`, `MyMusicJSONService.swift`, `MyMusicPersistenceModels.swift`, `MyMusicPersistenceService.swift`, `MyMusicPlaybackSession.swift`, `MyMusicTransferService.swift`, `LibraryRepository.swift`, `Sources/HomeStereoDLNAAppCore/ListeningStore.swift`, `QueueStore.swift`, `MyMusicTransferStore.swift`, `Sources/HomeStereoDLNAApp/MyMusicTransferView.swift`, `docs/mymusic-json-interchange.md`
-Keywords: `MyMusic-Library.json`, `MyMusic-Playback-Preferences.json`, `MyMusic-Playback-Events.json`, `trackID`, `trackId`, `MyMusicJSONCodec`, `MyMusicPersistenceService`, `MyMusicPlaybackSession`, `MyMusicTransferStore`, `mymusic_track_links`, `mymusic_playback_events`
+Keywords: `MyMusic-Library.json`, `MyMusic-Playlists.json`, `MyMusic-Regular-Playlists.json`, `MyMusic-Work-Playlists.json`, `MyMusic-Playback-Preferences.json`, `MyMusic-Playback-Events.json`, `trackID`, `playlistID`, `trackId`, `MyMusicJSONCodec`, `MyMusicPersistenceService`, `MyMusicPlaybackSession`, `MyMusicTransferStore`, `MyMusicStatusStore`, `MyMusicJSONEditorStore`, `MyMusicJSONEditorView`, `MyMusicTrackApplicationRow`, `mymusic_track_links`, `mymusic_playlist_id`, `mymusic_playback_events`
 Tests: `Tests/HomeStereoAppCoreTests/MyMusicJSONContractTests.swift`, `MyMusicPersistenceTests.swift`, `MyMusicPlaybackSessionTests.swift`, `Tests/HomeStereoDLNAAppCoreTests/MyMusicTransferStoreTests.swift`, `RendererPlaybackStoreTests.swift`
 
 ## Library Performance

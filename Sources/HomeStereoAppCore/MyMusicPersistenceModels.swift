@@ -21,6 +21,9 @@ public struct MyMusicTrackLink: Equatable, Sendable {
     public let fileSize: Int64
     public let duration: TimeInterval
     public let audioFingerprint: String?
+    public let firstSeenAt: Date?
+    public let lastSeenAt: Date
+    public let isInCurrentSnapshot: Bool
     public let matchedAt: Date
     public let matchMethod: MyMusicTrackMatchMethod
     public let source: MyMusicLinkSource
@@ -28,11 +31,14 @@ public struct MyMusicTrackLink: Equatable, Sendable {
     public init(
         homeStereoTrackID: Track.ID, myMusicTrackID: UUID, relativePath: String,
         fileSize: Int64, duration: TimeInterval, audioFingerprint: String? = nil,
+        firstSeenAt: Date? = nil, lastSeenAt: Date? = nil, isInCurrentSnapshot: Bool = true,
         matchedAt: Date, matchMethod: MyMusicTrackMatchMethod, source: MyMusicLinkSource
     ) {
         self.homeStereoTrackID = homeStereoTrackID; self.myMusicTrackID = myMusicTrackID
         self.relativePath = relativePath; self.fileSize = fileSize; self.duration = duration
-        self.audioFingerprint = audioFingerprint; self.matchedAt = matchedAt
+        self.audioFingerprint = audioFingerprint; self.firstSeenAt = firstSeenAt
+        self.lastSeenAt = lastSeenAt ?? matchedAt; self.isInCurrentSnapshot = isInCurrentSnapshot
+        self.matchedAt = matchedAt
         self.matchMethod = matchMethod; self.source = source
     }
 }
@@ -50,18 +56,45 @@ public struct PersistedMyMusicPlaybackEvent: Equatable, Sendable {
     public let homeStereoTrackID: Track.ID
     public let myMusicTrackID: UUID?
     public let playedAt: Date
+    public let endedAt: Date
     public let playDuration: TimeInterval
     public let trackDuration: TimeInterval
     public let completed: Bool
     public let skipped: Bool
     public let playSource: String
     public let selectionType: String
+    public let endKind: PlaybackAnalyticsEndKind
     public let platform: String
     public let schemaVersion: Int
+
+    public var completionRatio: Double? {
+        MyMusicPlaybackPolicy.completionRatio(
+            listenedSeconds: playDuration, trackDuration: trackDuration
+        )
+    }
+}
+
+public struct PersistedMyMusicPlayCount: Equatable, Sendable {
+    public let myMusicTrackID: UUID
+    public let homeStereoTrackID: Track.ID?
+    public let playCount: Int
+    public let lastPlayedAt: Date?
+    public let importedAt: Date
+
+    public init(
+        myMusicTrackID: UUID, homeStereoTrackID: Track.ID? = nil, playCount: Int,
+        lastPlayedAt: Date? = nil, importedAt: Date
+    ) {
+        self.myMusicTrackID = myMusicTrackID
+        self.homeStereoTrackID = homeStereoTrackID
+        self.playCount = max(0, playCount)
+        self.lastPlayedAt = lastPlayedAt
+        self.importedAt = importedAt
+    }
 }
 
 public enum MyMusicLibraryMatchStatus: String, Sendable {
-    case matched, newlyLinked, unchanged, unmatched, ambiguous, invalid
+    case matched, newlyLinked, unchanged, unmatched, ambiguous, conflict, invalid
 }
 
 public struct MyMusicLibraryMatchItem: Equatable, Sendable {
@@ -79,7 +112,33 @@ public struct MyMusicLibraryPersistenceResult: Equatable, Sendable {
     public var unchanged: Int { items.count { $0.status == .unchanged } }
     public var unmatched: Int { items.count { $0.status == .unmatched } }
     public var ambiguous: Int { items.count { $0.status == .ambiguous } }
+    public var conflicts: Int { items.count { $0.status == .conflict } }
     public var invalid: Int { items.count { $0.status == .invalid } }
+    public var exactTrackID: Int { items.count { $0.matchMethod == .trackID && $0.status != .conflict } }
+    public var relativePath: Int { items.count { $0.matchMethod == .relativePath && $0.status == .newlyLinked } }
+    public var fingerprint: Int { items.count { $0.matchMethod == .fingerprint && $0.status == .newlyLinked } }
+    public let missingFromSnapshot: Int
+
+    public init(items: [MyMusicLibraryMatchItem], missingFromSnapshot: Int = 0) {
+        self.items = items; self.missingFromSnapshot = missingFromSnapshot
+    }
+}
+
+public struct MyMusicPlaylistPersistenceResult: Equatable, Sendable {
+    public let addedPlaylists: Int
+    public let updatedPlaylists: Int
+    public let unchangedPlaylists: Int
+    public let importedTracks: Int
+    public let unresolvedTrackIDs: [UUID]
+    public let conflictedTrackIDs: [UUID]
+}
+
+public struct MyMusicPlaylistExportResult: Equatable, Sendable {
+    public let data: Data
+    public let totalTracks: Int
+    public let exportedTracks: Int
+    public let missingMyMusicID: Int
+    public let conflictedTracks: Int
 }
 
 public struct MyMusicPreferencesPersistenceResult: Equatable, Sendable {
@@ -96,8 +155,12 @@ public struct MyMusicPlaybackEventsPersistenceResult: Equatable, Sendable {
 
 public protocol MyMusicPersisting: Sendable {
     func loadMyMusicMatchContext() async throws -> (tracks: [Track], links: [MyMusicTrackLink])
+    func applyMyMusicLibrarySnapshot(
+        _ links: [MyMusicTrackLink], records: [MyMusicTrackRecord], importedAt: Date
+    ) async throws
     func saveMyMusicTrackLinks(_ links: [MyMusicTrackLink]) async throws
     func loadMyMusicTrackLinks() async throws -> [MyMusicTrackLink]
+    func loadMyMusicPlayCounts() async throws -> [PersistedMyMusicPlayCount]
     func mergeMyMusicPreferences(
         _ preferences: [MyMusicPreferenceRecord], exportedAt: Date
     ) async throws -> MyMusicPreferencesPersistenceResult
@@ -110,6 +173,8 @@ public protocol MyMusicPersisting: Sendable {
     func loadMyMusicPlaybackEvents() async throws -> [PersistedMyMusicPlaybackEvent]
     func loadMyMusicLibraryRecords() async throws -> [MyMusicTrackRecord]
     func loadMyMusicPlaybackEventRecords() async throws -> [MyMusicPlaybackEventRecord]
+    func loadMyMusicPlaylistContext() async throws -> (playlists: [Playlist], tracks: [Track], links: [MyMusicTrackLink])
+    func mergeMyMusicPlaylists(_ playlists: [MyMusicPlaylistRecord]) async throws -> MyMusicPlaylistPersistenceResult
 }
 
 public struct MyMusicPlaybackEventsExportResult: Equatable, Sendable {

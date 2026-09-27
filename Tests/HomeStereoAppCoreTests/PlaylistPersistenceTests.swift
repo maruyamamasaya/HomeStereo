@@ -29,4 +29,29 @@ final class PlaylistPersistenceTests: XCTestCase {
         let loaded = try await repository.loadPlaylists()
         XCTAssertEqual(loaded.first?.name, "Latest")
     }
+
+    func testPlaylistKindsAndWorkGenreClassificationArePreserved() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("library.sqlite3"))
+        try await repository.savePlaylist(Playlist(name: "Regular", kind: PlaylistKind.regular.rawValue))
+        try await repository.savePlaylist(Playlist(name: "Work", kind: PlaylistKind.work.rawValue))
+
+        let loaded = try await repository.loadPlaylists()
+        XCTAssertEqual(Set(loaded.map(\.playlistKind)), [.regular, .work])
+
+        let work = Track(
+            relativePath: "work.mp3", url: root.appendingPathComponent("work.mp3"),
+            title: "Work", genre: "Ambient; 作業用BGM"
+        )
+        let regular = Track(
+            relativePath: "regular.mp3", url: root.appendingPathComponent("regular.mp3"),
+            title: "Regular", genre: "Ambient"
+        )
+        XCTAssertTrue(PlaylistKind.work.accepts(work))
+        XCTAssertFalse(PlaylistKind.regular.accepts(work))
+        XCTAssertTrue(PlaylistKind.regular.accepts(regular))
+        XCTAssertFalse(PlaylistKind.work.accepts(regular))
+    }
 }

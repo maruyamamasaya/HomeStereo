@@ -16,8 +16,12 @@ struct LibraryView: View {
     @Bindable var queue: QueueStore
     @Bindable var playlists: PlaylistStore
     @Bindable var listening: ListeningStore
+    @Bindable var preferences: PlaybackPreferenceStore
+    @Bindable var genrePresets: GenreDisplayPresetStore
     let mode: LibraryBrowseMode
     @State private var searchPresented = false
+    @AppStorage("library.songs.table-columns")
+    private var songTableColumns = TableColumnCustomization<Track>()
 
     var body: some View {
         NavigationStack {
@@ -26,7 +30,11 @@ struct LibraryView: View {
                 else if hasNoSearchResults { noSearchResultsView }
                 else {
                     switch mode {
-                    case .songs: SongsTable(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, tracks: library.visibleTracks)
+                    case .songs: SongsTable(
+                        playback: playback, library: library, queue: queue, playlists: playlists,
+                        listening: listening, preferences: preferences, tracks: library.visibleTracks,
+                        columnCustomization: $songTableColumns
+                    )
                     case .albums: AlbumsList(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, albums: library.albums)
                     case .artists: ArtistsList(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, artists: library.artists)
                     }
@@ -35,31 +43,87 @@ struct LibraryView: View {
             .navigationTitle(title)
             .searchable(text: $library.searchText, isPresented: $searchPresented, prompt: "ライブラリを検索")
             .onChange(of: library.searchFocusRequest) { _, _ in searchPresented = true }
-            .toolbar {
-                Picker("並び替え", selection: $library.sort) {
-                    ForEach(LibrarySort.allCases) { Text($0.rawValue).tag($0) }
-                }.frame(minWidth: 110, idealWidth: 150)
-            }
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
-                    if playback.selectedDevice?.supportsAVTransport != true {
+                    if !playback.canPlaySelectedOutput {
                         HStack(spacing: 10) {
                             Image(systemName: "1.circle.fill").foregroundStyle(.orange)
-                            Text(playback.selectedDevice == nil
-                                 ? "再生するには、先にスピーカーを選んでください。"
+                            Text(!playback.hasSelectedOutput
+                                 ? "再生するには、先に出力先を選んでください。"
                                  : "選択中の機器では再生操作を利用できません。")
                                 .font(.callout)
                             Spacer()
-                            Button("スピーカーを選ぶ") { playback.destination = .devices }
+                            Button("出力先を選ぶ") { playback.destination = .devices }
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
                         Divider()
                     }
                     if !library.tracks.isEmpty {
+                        if mode == .songs, !genrePresets.presets.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 7) {
+                                    presetTag("すべて", selected: library.selectedGenrePresetID == nil && library.selectedGenre == nil) {
+                                        library.applyGenrePreset(nil)
+                                    }
+                                    ForEach(genrePresets.presets) { preset in
+                                        presetTag(preset.name, selected: library.selectedGenrePresetID == preset.id) {
+                                            library.applyGenrePreset(preset)
+                                        }
+                                    }
+                                    Button("編集", systemImage: "slider.horizontal.3") {
+                                        playback.destination = .genrePresets
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("ジャンルプリセットを編集")
+                                }
+                                .padding(.horizontal, 14).padding(.vertical, 7)
+                            }
+                            Divider()
+                        }
                         HStack {
                             Text(resultSummary).font(.caption).foregroundStyle(.secondary)
                             Spacer()
+                            if mode == .songs, !library.genres.isEmpty {
+                                Menu {
+                                    Button {
+                                        library.applySingleGenre(nil)
+                                    } label: {
+                                        if library.selectedGenre == nil {
+                                            Label("すべてのジャンル", systemImage: "checkmark")
+                                        } else {
+                                            Text("すべてのジャンル")
+                                        }
+                                    }
+                                    Divider()
+                                    ForEach(library.genres, id: \.self) { genre in
+                                        Button {
+                                            library.applySingleGenre(genre)
+                                        } label: {
+                                            if library.selectedGenre == genre {
+                                                Label(genre, systemImage: "checkmark")
+                                            } else {
+                                                Text(genre)
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    Label(library.selectedGenre ?? "すべてのジャンル", systemImage: "line.3.horizontal.decrease.circle")
+                                }
+                                .menuStyle(.borderlessButton)
+                                .fixedSize()
+                                .help("曲一覧をジャンルで絞り込み")
+                            }
+                            if mode == .songs {
+                                Menu("表示項目", systemImage: "tablecells") {
+                                    Toggle("音質", isOn: columnVisibilityBinding("audioQuality"))
+                                    Toggle("サイズ", isOn: columnVisibilityBinding("fileSize"))
+                                    Toggle("ファイルパス", isOn: columnVisibilityBinding("filePath"))
+                                }
+                                .menuStyle(.borderlessButton)
+                                .fixedSize()
+                                .help("曲一覧に表示する追加情報を選択")
+                            }
                             if !normalizedSearch.isEmpty {
                                 Button("検索をクリア") { library.searchText = "" }
                                     .buttonStyle(.link)
@@ -72,7 +136,23 @@ struct LibraryView: View {
                 }
                 .background(.bar)
             }
+            .alert("評価を保存できませんでした", isPresented: preferenceErrorPresented) {
+                Button("OK") { preferences.dismissError() }
+            } message: {
+                Text(preferences.errorMessage ?? "不明なエラー")
+            }
         }
+    }
+
+    private func presetTag(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.caption.weight(selected ? .semibold : .regular))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(selected ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
+                .foregroundStyle(selected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var title: String {
@@ -114,7 +194,25 @@ struct LibraryView: View {
         case .albums: count = library.albums.count; unit = "アルバム"
         case .artists: count = library.artists.count; unit = "組"
         }
-        return normalizedSearch.isEmpty ? "\(count)\(unit)" : "「\(normalizedSearch)」の検索結果：\(count)\(unit)"
+        let presetName = genrePresets.presets.first { $0.id == library.selectedGenrePresetID }?.name
+        let genrePrefix = mode == .songs ? (presetName ?? library.selectedGenre).map { "\($0) · " } ?? "" : ""
+        return normalizedSearch.isEmpty
+            ? "\(genrePrefix)\(count)\(unit)"
+            : "\(genrePrefix)「\(normalizedSearch)」の検索結果：\(count)\(unit)"
+    }
+
+    private func columnVisibilityBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { songTableColumns[visibility: id] == .visible },
+            set: { songTableColumns[visibility: id] = $0 ? .visible : .hidden }
+        )
+    }
+
+    private var preferenceErrorPresented: Binding<Bool> {
+        Binding(
+            get: { preferences.errorMessage != nil },
+            set: { if !$0 { preferences.dismissError() } }
+        )
     }
 }
 
@@ -124,25 +222,23 @@ private struct SongsTable: View {
     @Bindable var queue: QueueStore
     @Bindable var playlists: PlaylistStore
     @Bindable var listening: ListeningStore
+    @Bindable var preferences: PlaybackPreferenceStore
     let tracks: [Track]
+    @Binding var columnCustomization: TableColumnCustomization<Track>
 
     var body: some View {
         VStack(spacing: 0) {
-            Table(tracks, selection: $library.selectedTrackIDs) {
+            Table(
+                tracks,
+                selection: $library.selectedTrackIDs,
+                sortOrder: tableSortOrder,
+                columnCustomization: $columnCustomization
+            ) {
                 TableColumn("") { track in
-                    Button {
-                        play(track)
-                    } label: {
-                        Image(systemName: queue.nowPlaying.trackID == track.id ? "speaker.wave.2.fill" : "play.circle.fill")
-                            .foregroundStyle(queue.nowPlaying.trackID == track.id ? Color.accentColor : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(track.scanState != .available || playback.selectedDevice?.supportsAVTransport != true)
-                    .help(rowPlayHelp(track))
-                    .accessibilityLabel(queue.nowPlaying.trackID == track.id ? "再生中：\(track.title)" : "\(track.title)を再生")
+                    songActionButtons(track)
                 }
-                .width(30)
-                TableColumn("曲名") { track in
+                .width(156)
+                TableColumn("曲名", sortUsing: LibraryTrackComparator(sort: .title)) { track in
                     HStack(spacing: 9) {
                         CachedArtwork(track: track, library: library, size: 34)
                         Image(systemName: track.scanState == .available ? "music.note" : "exclamationmark.triangle")
@@ -151,71 +247,207 @@ private struct SongsTable: View {
                         Text(track.title).lineLimit(1)
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { play(track) }
+                    .simultaneousGesture(trackTapGesture(track))
+                    .help("ダブルクリックでキューの最後に追加")
                     .contextMenu {
                         let ids = selectedTrackIDs(for: track)
                         QueueContextMenu(queue: queue, playlists: playlists, listening: listening, trackIDs: ids, startingAt: track.id)
                     }
                     .draggable(TrackDragPayload.encode(selectedTrackIDs(for: track)))
-                }.width(min: 200, ideal: 300)
-                TableColumn("アーティスト") { Text($0.artist ?? "—") }
-                TableColumn("アルバム") { Text($0.album ?? "—") }
-                TableColumn("ジャンル") { Text($0.genre ?? "—").lineLimit(1) }
+                }
+                .width(min: 200, ideal: 300)
+                TableColumn("アーティスト", sortUsing: LibraryTrackComparator(sort: .artist)) { track in
+                    rowClickTarget(Text(track.artist ?? "—"), track: track)
+                }
+                TableColumn("アルバム", sortUsing: LibraryTrackComparator(sort: .album)) { track in
+                    rowClickTarget(Text(track.album ?? "—"), track: track)
+                }
+                TableColumn("ジャンル", sortUsing: LibraryTrackComparator(sort: .genre)) { track in
+                    rowClickTarget(Text(track.genre ?? "—").lineLimit(1), track: track)
+                }
                     .width(min: 72, ideal: 100)
-                TableColumn("年") { Text($0.releaseYear.map(String.init) ?? "—").monospacedDigit() }
+                TableColumn("年", sortUsing: LibraryTrackComparator(sort: .releaseYear)) { track in
+                    rowClickTarget(Text(track.releaseYear.map(String.init) ?? "—").monospacedDigit(), track: track)
+                }
                     .width(54)
-                TableColumn("時間") { Text(formatLibraryDuration($0.duration)) }.width(64)
-                TableColumn("音質") { Text(formatAudioQuality($0)).monospacedDigit().lineLimit(1) }
-                    .width(min: 130, ideal: 180)
-                TableColumn("サイズ") { Text(formatFileSize($0.fileSize)).monospacedDigit() }
-                    .width(78)
+                TableColumn("時間", sortUsing: LibraryTrackComparator(sort: .duration)) { track in
+                    rowClickTarget(Text(formatLibraryDuration(track.duration)), track: track)
+                }
+                .width(64)
+                TableColumn("音質") { track in
+                    rowClickTarget(Text(formatAudioQuality(track)).monospacedDigit().lineLimit(1), track: track)
+                }
+                .width(min: 130, ideal: 180)
+                .customizationID("audioQuality")
+                .defaultVisibility(.hidden)
+                TableColumn("サイズ") { track in
+                    rowClickTarget(Text(formatFileSize(track.fileSize)).monospacedDigit(), track: track)
+                }
+                .width(78)
+                .customizationID("fileSize")
+                .defaultVisibility(.hidden)
                 TableColumn("ファイルパス") { track in
                     Text(track.url.path)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(track.url.path)
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(trackTapGesture(track))
                 }
                 .width(min: 140, ideal: 240)
+                .customizationID("filePath")
+                .defaultVisibility(.hidden)
             }
-
-            if library.canLoadMoreTracks {
-                Divider()
-                Button("さらに表示（\(tracks.count)／\(library.totalFilteredTracks)）") { library.loadMoreTracks() }
-                    .padding(8).frame(maxWidth: .infinity).background(.bar)
-            }
-        }
-        .toolbar {
-            Text(selectionSummary)
-                .foregroundStyle(.secondary)
-            Button("選択した曲を再生", systemImage: "play.fill") {
-                let ids = selectedTrackIDs
-                guard let first = ids.first else { return }
-                Task { await queue.playNow(trackIDs: ids, startingAt: first, source: .library) }
-            }
-            .disabled(library.selectedTrackIDs.isEmpty || playback.selectedDevice?.supportsAVTransport != true)
-            .help(playButtonHelp)
-            Menu("選択した曲の操作", systemImage: "ellipsis.circle") {
-                Button("次に再生", systemImage: "text.insert") { Task { await queue.playNext(trackIDs: selectedTrackIDs) } }
-                Button("再生キューの最後に追加", systemImage: "text.append") { Task { await queue.append(trackIDs: selectedTrackIDs) } }
-                if !playlists.playlists.isEmpty {
-                    Divider()
-                    Menu("プレイリストに追加") {
-                        ForEach(playlists.playlists) { playlist in
-                            Button(playlist.name) { Task { await playlists.add(trackIDs: selectedTrackIDs, to: playlist.id) } }
-                        }
-                    }
-                }
-            }
-            .disabled(library.selectedTrackIDs.isEmpty)
-            .help(library.selectedTrackIDs.isEmpty ? "操作する曲を選択してください" : "選択した曲を再生キューまたはプレイリストへ追加")
+            // AppKit can eagerly measure thousands of inserted rows when a narrow
+            // filter is cleared. Replace the native table with the prepared result.
+            .id(library.browserPresentationID)
         }
     }
 
     private func play(_ track: Track) {
         guard track.scanState == .available else { return }
         Task {
-            await queue.playNow(trackIDs: [track.id], startingAt: track.id, source: .library)
+            await queue.playImmediately(trackID: track.id, source: .library)
         }
+    }
+
+    private func songActionButtons(_ track: Track) -> some View {
+        HStack(spacing: 4) {
+            Button {
+                play(track)
+            } label: {
+                Image(systemName: queue.nowPlaying.trackID == track.id ? "speaker.wave.2.fill" : "play.fill")
+                    .foregroundStyle(queue.nowPlaying.trackID == track.id ? Color.accentColor : Color.secondary)
+                    .frame(width: 22, height: 24)
+            }
+            .buttonStyle(.plain)
+            .disabled(track.scanState != .available || !playback.canPlaySelectedOutput)
+            .help(rowPlayHelp(track))
+            .accessibilityLabel(queue.nowPlaying.trackID == track.id ? "再生中：\(track.title)" : "\(track.title)を今すぐ再生")
+
+            Button {
+                append(track)
+            } label: {
+                Image(systemName: "plus")
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 22, height: 24)
+            }
+            .buttonStyle(.plain)
+            .disabled(track.scanState != .available)
+            .help(track.scanState == .available ? "再生キューの最後に追加" : "この曲のファイルが見つかりません")
+            .accessibilityLabel("\(track.title)を再生キューの最後に追加")
+
+            playlistMenu(track)
+
+            Button {
+                Task { await listening.toggleFavorite(track.id) }
+            } label: {
+                Image(systemName: listening.isFavorite(track.id) ? "heart.fill" : "heart")
+                    .foregroundStyle(listening.isFavorite(track.id) ? Color.pink : Color.secondary)
+                    .frame(width: 22, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help(listening.isFavorite(track.id) ? "お気に入りから削除" : "お気に入りに追加")
+            .accessibilityLabel("\(track.title)を\(listening.isFavorite(track.id) ? "お気に入りから削除" : "お気に入りに追加")")
+
+            preferenceButtons(track)
+        }
+    }
+
+    private func playlistMenu(_ track: Track) -> some View {
+        let compatiblePlaylists = playlists.compatiblePlaylists(for: [track.id])
+        return Menu {
+            if compatiblePlaylists.isEmpty {
+                Text("追加できるプレイリストがありません")
+            } else {
+                ForEach(compatiblePlaylists) { playlist in
+                    Button(playlist.name) {
+                        Task { await playlists.add(trackIDs: [track.id], to: playlist.id) }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "text.badge.plus")
+                .foregroundStyle(Color.secondary)
+                .frame(width: 22, height: 24)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("プレイリストに追加")
+        .accessibilityLabel("\(track.title)をプレイリストに追加")
+    }
+
+    private func append(_ track: Track) {
+        guard track.scanState == .available else { return }
+        Task { await queue.append(trackIDs: [track.id]) }
+    }
+
+    private func preferenceButtons(_ track: Track) -> some View {
+        let value = preferences.preference(for: track.id)
+        return HStack(spacing: 6) {
+            Button {
+                Task { await preferences.adjustPreference(trackID: track.id, delta: 1) }
+            } label: {
+                preferenceIcon(
+                    systemName: value > 0 ? "hand.thumbsup.fill" : "hand.thumbsup",
+                    color: value > 0 ? .green : .secondary,
+                    badgeValue: value > 0 ? value : nil
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(value >= 10)
+            .help(value >= 10 ? "Good評価は上限の+10です" : "Good評価を1増やす（現在 \(value)）")
+            .accessibilityLabel("\(track.title)のGood評価を1増やす")
+            .accessibilityValue("現在 \(value)、上限 10")
+
+            Button {
+                Task { await preferences.adjustPreference(trackID: track.id, delta: -1) }
+            } label: {
+                preferenceIcon(
+                    systemName: value < 0 ? "hand.thumbsdown.fill" : "hand.thumbsdown",
+                    color: value < 0 ? .orange : .secondary,
+                    badgeValue: value < 0 ? abs(value) : nil
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(value <= -10)
+            .help(value <= -10 ? "Bad評価は下限の-10です" : "Bad評価を1減らす（現在 \(value)）")
+            .accessibilityLabel("\(track.title)のBad評価を1減らす")
+            .accessibilityValue("現在 \(value)、下限 -10")
+        }
+    }
+
+    private func preferenceIcon(systemName: String, color: Color, badgeValue: Int?) -> some View {
+        Image(systemName: systemName)
+            .foregroundStyle(color)
+            .frame(width: 22, height: 24)
+            .overlay(alignment: .topTrailing) {
+                if let badgeValue {
+                    Text("\(badgeValue)")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 13, minHeight: 13)
+                        .padding(.horizontal, badgeValue >= 10 ? 1 : 0)
+                        .background(color, in: Capsule())
+                        .offset(x: 5, y: -2)
+                        .accessibilityHidden(true)
+                }
+            }
+    }
+
+    private func trackTapGesture(_ track: Track) -> some Gesture {
+        TapGesture(count: 2)
+            .onEnded { _ in append(track) }
+    }
+
+    private func rowClickTarget<Content: View>(_ content: Content, track: Track) -> some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .simultaneousGesture(trackTapGesture(track))
+            .help("ダブルクリックでキューの最後に追加")
     }
 
     private func selectedTrackIDs(for track: Track) -> [Track.ID] {
@@ -227,23 +459,31 @@ private struct SongsTable: View {
         tracks.map(\.id).filter { library.selectedTrackIDs.contains($0) }
     }
 
-    private var selectionSummary: String {
-        library.selectedTrackIDs.isEmpty ? "曲を選択" : "\(library.selectedTrackIDs.count)曲を選択中"
+    private var tableSortOrder: Binding<[LibraryTrackComparator]> {
+        Binding(
+            get: {
+                [LibraryTrackComparator(
+                    sort: library.sort,
+                    order: library.sortDirection == .ascending ? .forward : .reverse
+                )]
+            },
+            set: { order in
+                guard let comparator = order.first else { return }
+                library.setSort(
+                    comparator.sort,
+                    direction: comparator.order == .forward ? .ascending : .descending
+                )
+            }
+        )
     }
 
     private func rowPlayHelp(_ track: Track) -> String {
         if track.scanState != .available { return "この曲のファイルが見つかりません" }
-        if playback.selectedDevice == nil { return "先に再生先のスピーカーを選んでください" }
-        if playback.selectedDevice?.supportsAVTransport != true { return "選択した機器では再生できません" }
+        if !playback.hasSelectedOutput { return "先に再生先を選んでください" }
+        if !playback.canPlaySelectedOutput { return "選択した機器では再生できません" }
         return "\(track.title)を今すぐ再生"
     }
 
-    private var playButtonHelp: String {
-        if playback.selectedDevice == nil { return "先に再生先のスピーカーを選んでください" }
-        if playback.selectedDevice?.supportsAVTransport != true { return "選択した機器は再生操作に対応していません" }
-        if library.selectedTrackIDs.isEmpty { return "再生する曲を選択してください" }
-        return "選択した曲を再生キューに入れて再生します"
-    }
 }
 
 private struct AlbumsList: View {
@@ -429,10 +669,10 @@ private struct ArtistDetail: View {
             HStack(spacing: 10) {
                 Button("再生", systemImage: "play.fill") { play(shuffled: false) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(playback.selectedDevice?.supportsAVTransport != true || availableTrackIDs.isEmpty)
+                    .disabled(!playback.canPlaySelectedOutput || availableTrackIDs.isEmpty)
                 Button("シャッフル", systemImage: "shuffle") { play(shuffled: true) }
                     .buttonStyle(.bordered)
-                    .disabled(playback.selectedDevice?.supportsAVTransport != true || availableTrackIDs.isEmpty)
+                    .disabled(!playback.canPlaySelectedOutput || availableTrackIDs.isEmpty)
                 Button("再生キューに追加", systemImage: "text.append") {
                     Task { await queue.append(trackIDs: availableTrackIDs) }
                 }
@@ -460,7 +700,7 @@ private struct ArtistDetail: View {
                     Task { await queue.playNow(trackIDs: ids, startingAt: first, source: .album) }
                 }
                 .labelStyle(.iconOnly)
-                .disabled(playback.selectedDevice?.supportsAVTransport != true)
+                .disabled(!playback.canPlaySelectedOutput)
                 .help("\(group.title)を再生")
             }
             ForEach(group.tracks) { track in
@@ -521,44 +761,52 @@ private struct ArtistTrackRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(track.trackNumber.map(String.init) ?? "—")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 24, alignment: .trailing)
-            if queue.nowPlaying.trackID == track.id {
-                Image(systemName: "speaker.wave.2.fill")
-                    .foregroundStyle(.tint)
-                    .accessibilityLabel("再生中")
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(track.title)
-                if let albumArtist = track.albumArtist, albumArtist != track.artist {
-                    Text(albumArtist).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Text(track.trackNumber.map(String.init) ?? "—")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, alignment: .trailing)
+                if queue.nowPlaying.trackID == track.id {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .foregroundStyle(.tint)
+                        .accessibilityLabel("再生中")
                 }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(track.title)
+                    if let albumArtist = track.albumArtist, albumArtist != track.artist {
+                        Text(albumArtist).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if track.scanState == .missing {
+                    Label("ファイルが見つかりません", systemImage: "exclamationmark.triangle")
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.orange)
+                }
+                Text(formatLibraryDuration(track.duration)).monospacedDigit().foregroundStyle(.secondary)
             }
-            Spacer()
-            if track.scanState == .missing {
-                Label("ファイルが見つかりません", systemImage: "exclamationmark.triangle")
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(.orange)
-            }
-            Text(formatLibraryDuration(track.duration)).monospacedDigit().foregroundStyle(.secondary)
-            Button("再生", systemImage: "play.fill") {
-                Task { await queue.playNow(trackIDs: [track.id], startingAt: track.id, source: .artist) }
+            .contentShape(Rectangle())
+            .simultaneousGesture(trackTapGesture)
+            .help("ダブルクリックでキューの最後に追加")
+            Button("今すぐ再生", systemImage: "play.fill") {
+                Task { await queue.playImmediately(trackID: track.id, source: .artist) }
             }
             .labelStyle(.iconOnly)
-            .disabled(track.scanState != .available || playback.selectedDevice?.supportsAVTransport != true)
+            .disabled(track.scanState != .available || !playback.canPlaySelectedOutput)
         }
         .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            guard track.scanState == .available else { return }
-            Task { await queue.playNow(trackIDs: [track.id], startingAt: track.id, source: .artist) }
-        }
         .contextMenu {
             QueueContextMenu(queue: queue, playlists: playlists, listening: listening, trackIDs: [track.id], startingAt: track.id)
         }
         .draggable(TrackDragPayload.encode([track.id]))
+    }
+
+    private var trackTapGesture: some Gesture {
+        TapGesture(count: 2)
+            .onEnded { _ in
+                guard track.scanState == .available else { return }
+                Task { await queue.append(trackIDs: [track.id]) }
+            }
     }
 }
 
@@ -606,10 +854,8 @@ private struct CollectionDetail: View {
                 }
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
-                    guard track.scanState == .available else { return }
-                    Task { await queue.playNow(trackIDs: [track.id], startingAt: track.id, source: .album) }
-                }
+                .simultaneousGesture(trackTapGesture(track))
+                .help("ダブルクリックでキューの最後に追加")
                 .tag(track.id)
                 .contextMenu {
                     let ids = selection.contains(track.id) ? tracks.map(\.id).filter { selection.contains($0) } : [track.id]
@@ -620,6 +866,14 @@ private struct CollectionDetail: View {
         }
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
+    }
+
+    private func trackTapGesture(_ track: Track) -> some Gesture {
+        TapGesture(count: 2)
+            .onEnded { _ in
+                guard track.scanState == .available else { return }
+                Task { await queue.append(trackIDs: [track.id]) }
+            }
     }
 
     private func albumHeader(_ artworkTrack: Track) -> some View {
@@ -635,10 +889,10 @@ private struct CollectionDetail: View {
                 HStack(spacing: 10) {
                     Button("再生", systemImage: "play.fill") { playAlbum(shuffled: false) }
                         .buttonStyle(.borderedProminent)
-                        .disabled(playback.selectedDevice?.supportsAVTransport != true || tracks.isEmpty)
+                        .disabled(!playback.canPlaySelectedOutput || tracks.isEmpty)
                     Button("シャッフル", systemImage: "shuffle") { playAlbum(shuffled: true) }
                         .buttonStyle(.bordered)
-                        .disabled(playback.selectedDevice?.supportsAVTransport != true || tracks.isEmpty)
+                        .disabled(!playback.canPlaySelectedOutput || tracks.isEmpty)
                     Button("再生キューに追加", systemImage: "text.append") { Task { await queue.append(trackIDs: tracks.map(\.id)) } }
                         .buttonStyle(.bordered)
                         .disabled(tracks.isEmpty)
@@ -671,9 +925,10 @@ struct QueueContextMenu: View {
         if trackIDs.count == 1, let id = trackIDs.first {
             Button(listening.isFavorite(id) ? "お気に入りから削除" : "お気に入りに追加") { Task { await listening.toggleFavorite(id) } }
         }
-        if !playlists.playlists.isEmpty {
+        let compatiblePlaylists = playlists.compatiblePlaylists(for: trackIDs)
+        if !compatiblePlaylists.isEmpty {
             Menu("プレイリストに追加") {
-                ForEach(playlists.playlists) { playlist in
+                ForEach(compatiblePlaylists) { playlist in
                     Button(playlist.name) { Task { await playlists.add(trackIDs: trackIDs, to: playlist.id) } }
                 }
             }

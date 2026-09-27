@@ -24,9 +24,26 @@ public struct BackupPlaylist: Codable, Equatable, Sendable {
     public let name: String
     public let createdAt: Date
     public let updatedAt: Date
+    public let kind: String
     public let tracks: [BackupTrackReference]
-    public init(id: UUID, name: String, createdAt: Date, updatedAt: Date, tracks: [BackupTrackReference]) {
-        self.id = id; self.name = name; self.createdAt = createdAt; self.updatedAt = updatedAt; self.tracks = tracks
+    public init(
+        id: UUID, name: String, createdAt: Date, updatedAt: Date,
+        kind: String = PlaylistKind.regular.rawValue, tracks: [BackupTrackReference]
+    ) {
+        self.id = id; self.name = name; self.createdAt = createdAt; self.updatedAt = updatedAt
+        self.kind = kind; self.tracks = tracks
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, createdAt, updatedAt, kind, tracks }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        kind = try container.decodeIfPresent(String.self, forKey: .kind) ?? PlaylistKind.regular.rawValue
+        tracks = try container.decode([BackupTrackReference].self, forKey: .tracks)
     }
 }
 

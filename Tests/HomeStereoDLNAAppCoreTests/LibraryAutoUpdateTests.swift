@@ -28,6 +28,33 @@ import Testing
     #expect(store.lastAutomaticUpdate != nil)
 }
 
+@MainActor
+@Test func automaticScanWaitsUntilPlaybackStops() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("library.sqlite3"))
+    let folder = LibraryFolder(displayName: "Music", path: root.path)
+    try await repository.addFolder(folder, bookmarkData: Data([1]))
+    let scanner = CountingScanner()
+    let monitor = TestFolderMonitor()
+    let store = LibraryStore(
+        scanner: scanner, folderAccess: TestFolderAccess(url: root), repository: repository,
+        changeMonitor: monitor, lifecycleMonitor: TestSystemMonitor(), changeDebounce: .zero
+    )
+    await store.load()
+    await store.setAutoUpdateEnabled(true)
+    store.setPlaybackActive(true)
+
+    monitor.emit(folder.id)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await scanner.scanCount == 0)
+
+    store.setPlaybackActive(false)
+    try await Task.sleep(for: .seconds(2.1))
+    #expect(await scanner.scanCount == 1)
+}
+
 private actor CountingScanner: LibraryScanning {
     private(set) var scanCount = 0
     func scan(folder: URL) async throws -> [Track] { [] }

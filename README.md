@@ -29,6 +29,8 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 5. 「フォルダ」で音楽フォルダを登録してscanするか、「再生中」で音源を1つ選択します。
 6. 「ライブラリ」で曲を選び、再生を押します。`⌘O`でフォルダ登録、`⇧⌘O`で単曲選択、`⌘F`で検索、Spaceで再生／一時停止できます。
 
+外観はアプリの「設定」またはメニューバーの「表示」→「テーマ」から変更できます。システム外観のほか、シンプルダーク、Living Aurora、Pulse Neon、Blue Cosmosを選べます。
+
 再生時だけ、Rendererへ到達するMacのLANアドレスへ小さなHTTP serverをbindします。URLはopaque UUIDと一時tokenを含み、選択した1ファイルだけを`GET`／`HEAD`／byte Rangeで配信します。ファイル変更、Renderer変更、window終了で旧serverとURLを無効化します。
 
 ## 実装範囲
@@ -47,9 +49,10 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 - 埋め込みArtworkの遅延読込と上限付きメモリcache
 - 永続Queue、今すぐ／次／末尾追加、並べ替え／削除、前後移動、Shuffle、Repeat
 - AVTransport完走検知による連続再生（通信失敗時は自動進行しない）
-- ローカルPlaylistの作成／名称変更／削除、曲順編集、通常／Shuffle再生
+- 通常／作業用を分離したローカルPlaylistの作成／名称変更／削除、曲順編集、通常／Shuffle再生
 - 曲／Album／Artist／現在QueueからのPlaylist追加、missing曲の参照保持
 - M3U8 Import／Export（曖昧な相対pathは自動接続しない）
+- MyMusicを正本とするCanonical Track IDとPlaylist JSONのPreview付きImport／Export
 - Favorite登録／解除と通常／Shuffle再生
 - 実再生時間、完走／途中停止をTrack IDで保持する再生履歴、最近／頻繁／未再生一覧
 - media key／MPRemoteCommandCenterによる既存Queue操作、Now Playing同期
@@ -57,6 +60,7 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 - スピーカー選択→曲選択→再生を案内する初回導線と、無効な再生操作の理由表示
 - Queue曲と直接選択ファイルで共通のNow Playing状態（曲なし／読込中／停止中／再生中／一時停止／通信不明）
 - 行内再生と選択曲操作を備えた曲一覧、Artworkグリッドのアルバム／アーティスト一覧と詳細ヘッダー
+- 編集・並べ替え・JSON Import／Exportに対応したジャンル表示プリセットと、曲一覧上部のタグ型切り替え
 - Artwork、再生状態、空状態を揃えたお気に入り／最近再生／よく聴く／未再生画面
 - 曲順編集と「次に再生」へ集中した再生キュー、代表Artworkと概要を備えたプレイリスト
 - 下部プレイヤーと再生中画面から操作できるShuffle／Repeat
@@ -67,14 +71,14 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 - 登録folderのFSEvents監視、通知debounce、未変更metadataを読まない自動差分scan
 - sleep中の監視停止、wake後の安全な再scan、自動更新ON／OFFと最終更新日時
 - Playlist／Favorite／履歴／設定のversioned JSON Backup、preview付きtransactional Import
-- 20,000曲合成fixture、150件ずつの段階表示、debounced検索、downsample Artwork cache
+- 30,000曲合成fixture、全曲Table表示、background並び替え／debounced検索、downsample Artwork cache
 - 再生session generation、古いpolling破棄、終端位置を加味した重複しない曲終了判定
 - Play／Pause／Seek／曲切替の直列化、read-only SOAPのtimeout時1回だけの再試行
 - Renderer側の曲変更／停止／切断同期、再生中のidle sleep抑止と確実な解除
 - IP、token、絶対pathを含めない診断JSONの書き出し
 - 曲／Album／Artist／Playlistの複数選択、Queue／Playlistへのdrag & drop、右クリック操作
 - 開閉と状態復元が可能なQueue Inspector、Artwork付き小型プレイヤーWindow
-- window size／Sidebar状態復元、VoiceOver label、system文字サイズ／contrast／Reduce Motion準拠
+- window size／Sidebar状態復元、VoiceOver label、system文字サイズ／contrast／Reduce Motion準拠。960px級の狭い幅ではQueue Inspectorを自動退避し、文字を縮小せずメイン領域を確保
 - DeleteはQueue／Playlist参照だけを対象とし、folder解除やresetを含むdestructive操作は確認後に実行
 - rename／同一folder内移動／missing復帰で参照を保つ保守的Track Identity（SQLite schema v8）
 
@@ -124,7 +128,7 @@ L/Rが別Rendererとしてしか見えない場合、AVTransportがない場合�
 
 ## 既知の制約
 
-- Rendererへ同時配信するのは1ファイルだけです。Queueは順次URIを更新します。Cloud、MyMusic連携はありません。
+- Rendererへ同時配信するのは1ファイルだけです。Queueは順次URIを更新します。MyMusic連携は手動JSON受け渡しで、自動同期は行いません。
 - Track ArtistとAlbum Artistは別fieldとして扱います。metadataにAlbum Artistがない場合は補完せず「不明なAlbum Artist」と表示します。
 - Track Identityは同一folder内だけで、relative path、macOS file resource identifier、file size＋duration＋codec／sample rate／bit depth／channel＋metadataの一意一致の順に判定します。曖昧候補、folder間／volume間移動は統合せず、通常scanでfull-file hashを計算しません。
 - JSON Backup schema v1は変更していません。Track IDを維持できない場合も既存のrelativePath／metadata hint照合と互換です。

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum MyMusicPlaySource: String, Codable, Sendable, CaseIterable {
-    case library, album, artist, favorite, playlist, queue, search, shuffle, history, unknown
+    case library, album, artist, favorite, playlist, queue, search, shuffle, history, station, unknown
 }
 
 public enum MyMusicSelectionType: String, Codable, Sendable {
@@ -33,26 +33,37 @@ public struct LocalMyMusicPlaybackEvent: Equatable, Sendable {
     public let homeStereoTrackID: Track.ID
     public let myMusicTrackID: UUID?
     public let playedAt: Date
+    public let endedAt: Date
     public let playDuration: TimeInterval
     public let trackDuration: TimeInterval
     public let completed: Bool
     public let skipped: Bool
     public let playSource: MyMusicPlaySource
     public let selectionType: MyMusicSelectionType
+    public let endKind: PlaybackAnalyticsEndKind
     public let platform: String
     public let schemaVersion: Int
 
+    public var completionRatio: Double? {
+        MyMusicPlaybackPolicy.completionRatio(
+            listenedSeconds: playDuration, trackDuration: trackDuration
+        )
+    }
+
     public init(
         eventID: String, homeStereoTrackID: Track.ID, myMusicTrackID: UUID? = nil,
-        playedAt: Date, playDuration: TimeInterval, trackDuration: TimeInterval,
+        playedAt: Date, endedAt: Date? = nil, playDuration: TimeInterval, trackDuration: TimeInterval,
         completed: Bool, skipped: Bool, playSource: MyMusicPlaySource,
-        selectionType: MyMusicSelectionType, platform: String = "macOS", schemaVersion: Int = 1
+        selectionType: MyMusicSelectionType, endKind: PlaybackAnalyticsEndKind = .other,
+        platform: String = "macOS", schemaVersion: Int = 1
     ) {
         self.eventID = eventID; self.homeStereoTrackID = homeStereoTrackID
         self.myMusicTrackID = myMusicTrackID; self.playedAt = playedAt
+        self.endedAt = endedAt ?? playedAt.addingTimeInterval(max(0, playDuration))
         self.playDuration = playDuration; self.trackDuration = trackDuration
         self.completed = completed; self.skipped = completed ? false : skipped
         self.playSource = playSource; self.selectionType = selectionType
+        self.endKind = endKind
         self.platform = platform; self.schemaVersion = schemaVersion
     }
 }
@@ -77,7 +88,8 @@ public struct MyMusicPlaybackSession: Equatable, Sendable {
     ) {
         self.eventID = eventID; self.homeStereoTrackID = homeStereoTrackID
         self.myMusicTrackID = myMusicTrackID; self.startedAt = startedAt
-        self.listenedSeconds = 0; self.trackDuration = max(0, trackDuration)
+        self.listenedSeconds = 0
+        self.trackDuration = MyMusicPlaybackPolicy.hasValidDuration(trackDuration) ? trackDuration : 0
         self.playSource = playSource; self.selectionType = selectionType
         self.lastObservedPosition = nil; self.finalized = false; self.isPlaying = true
     }
@@ -97,7 +109,7 @@ public struct MyMusicPlaybackSession: Equatable, Sendable {
         listenedSeconds += delta
     }
 
-    public mutating func finalize(reason: MyMusicPlaybackEndReason) -> LocalMyMusicPlaybackEvent? {
+    public mutating func finalize(reason: MyMusicPlaybackEndReason, endedAt: Date = .now) -> LocalMyMusicPlaybackEvent? {
         guard !finalized else { return nil }
         finalized = true; isPlaying = false
         let completed = MyMusicPlaybackPolicy.isCompleted(
@@ -106,9 +118,10 @@ public struct MyMusicPlaybackSession: Equatable, Sendable {
         return LocalMyMusicPlaybackEvent(
             eventID: eventID, homeStereoTrackID: homeStereoTrackID,
             myMusicTrackID: myMusicTrackID, playedAt: startedAt,
+            endedAt: max(endedAt, startedAt),
             playDuration: listenedSeconds, trackDuration: trackDuration,
             completed: completed, skipped: reason.isUserDeparture && !completed,
-            playSource: playSource, selectionType: selectionType
+            playSource: playSource, selectionType: selectionType, endKind: reason.analyticsEndKind
         )
     }
 }
@@ -117,10 +130,38 @@ public enum MyMusicPlaybackPolicy {
     public static let maximumContinuousPositionDelta: TimeInterval = 5
 
     public static func isCompleted(listenedSeconds: TimeInterval, trackDuration: TimeInterval) -> Bool {
-        listenedSeconds >= max(3, trackDuration * 0.94)
+        guard listenedSeconds.isFinite, listenedSeconds >= 0, hasValidDuration(trackDuration) else { return false }
+        return listenedSeconds >= max(3, trackDuration * 0.94)
+    }
+
+    public static func completionRatio(
+        listenedSeconds: TimeInterval, trackDuration: TimeInterval
+    ) -> Double? {
+        guard listenedSeconds.isFinite, listenedSeconds >= 0, hasValidDuration(trackDuration) else { return nil }
+        return min(1, listenedSeconds / trackDuration)
     }
 
     public static func countsAsPlay(listenedSeconds: TimeInterval, trackDuration: TimeInterval) -> Bool {
-        listenedSeconds >= min(30, max(0, trackDuration) * 0.5)
+        guard listenedSeconds.isFinite, listenedSeconds >= 0 else { return false }
+        guard hasValidDuration(trackDuration) else { return listenedSeconds >= 30 }
+        return listenedSeconds >= min(30, trackDuration * 0.5)
+    }
+
+    public static func isEarlySkip(skipped: Bool, listenedSeconds: TimeInterval) -> Bool {
+        skipped && listenedSeconds.isFinite && listenedSeconds >= 0 && listenedSeconds <= 30
+    }
+
+    public static func hasValidDuration(_ duration: TimeInterval) -> Bool {
+        duration.isFinite && duration > 0
+    }
+}
+
+private extension MyMusicPlaybackEndReason {
+    var analyticsEndKind: PlaybackAnalyticsEndKind {
+        switch self {
+        case .naturalEnd: .natural
+        case .userAdvanced, .directSelection, .queueReplacement: .userSkipped
+        case .stop, .error, .playerDestroyed: .other
+        }
     }
 }

@@ -3,7 +3,8 @@ import Foundation
 public enum TrackScanState: String, Sendable { case available, unreadable, missing }
 
 public struct Track: Identifiable, Hashable, Sendable {
-    public static let metadataVersion = 4
+    public static let metadataVersion = 5
+    public static let workPlaybackGenre = "作業用BGM"
 
     public let id: UUID
     public let libraryFolderID: UUID
@@ -37,6 +38,20 @@ public struct Track: Identifiable, Hashable, Sendable {
     public let scanState: TrackScanState
     public let metadataSchemaVersion: Int
     public let lastScannedAt: Date
+
+    public var isEligibleForWorkPlayback: Bool {
+        normalizedGenreNames.contains(Self.workPlaybackGenre)
+    }
+
+    public var normalizedGenreNames: Set<String> {
+        guard let genre else { return [] }
+        return Set(
+            genre
+                .split(whereSeparator: { $0 == ";" || $0 == "\0" })
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+    }
 
     public init(
         id: UUID = UUID(), libraryFolderID: UUID = UUID(), relativePath: String? = nil,

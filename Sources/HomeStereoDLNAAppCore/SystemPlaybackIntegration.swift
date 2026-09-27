@@ -30,7 +30,8 @@ public final class SystemPlaybackIntegration {
     private let playback: RendererPlaybackStore
     private let library: LibraryStore
     private var currentPresentation = NowPlayingPresentation()
-    private var currentArtworkData: Data?
+    private var currentArtwork: MPMediaItemArtwork?
+    private var lastPublishedElapsed: TimeInterval = -.infinity
     private var artworkTask: Task<Void, Never>?
 
     public init(queue: QueueStore, playback: RendererPlaybackStore, library: LibraryStore) {
@@ -68,18 +69,27 @@ public final class SystemPlaybackIntegration {
 
     private func setPresentation(_ presentation: NowPlayingPresentation) {
         let trackChanged = currentPresentation.trackID != presentation.trackID || currentPresentation.title != presentation.title
+        let stateChanged = currentPresentation.state != presentation.state
+        let durationChanged = currentPresentation.duration != presentation.duration
         currentPresentation = presentation
-        updateCommandAvailability()
-        guard trackChanged else { publish(); return }
+        if trackChanged || stateChanged { updateCommandAvailability() }
+        if !trackChanged {
+            if stateChanged || durationChanged || abs(presentation.elapsed - lastPublishedElapsed) >= 5 {
+                publish()
+            }
+            return
+        }
         artworkTask?.cancel()
-        currentArtworkData = nil
+        currentArtwork = nil
         publish()
         guard let track = queue.nowPlayingTrack else { return }
         artworkTask = Task { [weak self] in
             guard let self else { return }
             let data = await library.artworkData(for: track)
             guard !Task.isCancelled, currentPresentation.trackID == track.id else { return }
-            currentArtworkData = data
+            if let data, let image = NSImage(data: data) {
+                currentArtwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            }
             publish()
         }
     }
@@ -107,10 +117,9 @@ public final class SystemPlaybackIntegration {
         ]
         if let artist = snapshot.artist { info[MPMediaItemPropertyArtist] = artist }
         if let album = snapshot.album { info[MPMediaItemPropertyAlbumTitle] = album }
-        if let currentArtworkData, let image = NSImage(data: currentArtworkData) {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-        }
+        if let currentArtwork { info[MPMediaItemPropertyArtwork] = currentArtwork }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        lastPublishedElapsed = currentPresentation.elapsed
         switch currentPresentation.state {
         case .playing: MPNowPlayingInfoCenter.default().playbackState = .playing
         case .paused, .loading: MPNowPlayingInfoCenter.default().playbackState = .paused

@@ -12,37 +12,58 @@ struct DLNAContentView: View {
     @Bindable var queue: QueueStore
     @Bindable var playlists: PlaylistStore
     @Bindable var listening: ListeningStore
+    @Bindable var analytics: AnalyticsStore
+    @Bindable var preferences: PlaybackPreferenceStore
+    @Bindable var genrePresets: GenreDisplayPresetStore
     @Bindable var recovery: RecoveryStore
     @Bindable var backup: BackupStore
     @Bindable var myMusic: MyMusicTransferStore
+    @Bindable var myMusicStatus: MyMusicStatusStore
+    @Bindable var developer: MyMusicJSONEditorStore
     @SceneStorage("main.sidebar.visibility") private var sidebarVisibility = "all"
-    @AppStorage("main.queueInspector.visible.compactV1") private var queueInspectorVisible = false
+    @AppStorage("main.queueInspector.visible.compactV2") private var queueInspectorVisible = true
+    @State private var usesQueueInspector = true
+    @State private var usesCompactSidebar = false
     var body: some View {
-        VStack(spacing: 0) {
+        GeometryReader { window in
+            VStack(spacing: 0) {
             NavigationSplitView(columnVisibility: Binding(
                 get: { sidebarVisibility == "detail" ? .detailOnly : .all },
                 set: { sidebarVisibility = $0 == .detailOnly ? "detail" : "all" }
             )) {
                 List(selection: $store.destination) {
-                    Section("ライブラリ") {
+                    Section {
                         Label("曲", systemImage: "music.note").tag(DLNASidebarDestination.songs)
                         Label("アルバム", systemImage: "square.stack").tag(DLNASidebarDestination.albums)
                         Label("アーティスト", systemImage: "music.mic").tag(DLNASidebarDestination.artists)
+                    } header: {
+                        sidebarSectionHeader("ライブラリ")
                     }
-                    Section("コレクション") {
+                    Section {
                         Label("お気に入り", systemImage: "heart").tag(DLNASidebarDestination.favorites)
                         Label("履歴", systemImage: "clock.arrow.circlepath").tag(DLNASidebarDestination.history)
+                        Label("分析", systemImage: "chart.bar.xaxis").tag(DLNASidebarDestination.analytics)
+                        Label("ジャンルプリセット", systemImage: "tag").tag(DLNASidebarDestination.genrePresets)
                         Label("プレイリスト", systemImage: "music.note.list").tag(DLNASidebarDestination.playlists)
+                        Label("作業用プレイリスト", systemImage: "timer").tag(DLNASidebarDestination.workPlaylists)
+                    } header: {
+                        sidebarSectionHeader("コレクション")
                     }
-                    Section("再生") {
+                    Section {
                         Label("スピーカー", systemImage: "hifispeaker.2").tag(DLNASidebarDestination.devices)
                         Label("再生中", systemImage: "play.circle").tag(DLNASidebarDestination.playback)
                         Label("次はこちら", systemImage: "list.number").tag(DLNASidebarDestination.queue)
+                    } header: {
+                        sidebarSectionHeader("再生")
                     }
-                    Section("管理") {
+                    Section {
                         Label("フォルダ", systemImage: "folder").tag(DLNASidebarDestination.folders)
                         Label("バックアップ", systemImage: "externaldrive").tag(DLNASidebarDestination.backup)
                         Label("MyMusic連携", systemImage: "arrow.left.arrow.right.circle").tag(DLNASidebarDestination.myMusic)
+                        Label("MyMusic適用状況", systemImage: "checklist.checked").tag(DLNASidebarDestination.myMusicStatus)
+                        Label("開発者", systemImage: "hammer").tag(DLNASidebarDestination.developer)
+                    } header: {
+                        sidebarSectionHeader("管理")
                     }
                 }
                 .listStyle(.sidebar)
@@ -51,13 +72,15 @@ struct DLNAContentView: View {
             } detail: {
                 switch store.destination {
                 case .devices: DevicesView(store: store, recovery: recovery) { store.destination = .songs }
-                case .songs: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, mode: .songs)
-                case .albums: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, mode: .albums)
-                case .artists: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, mode: .artists)
+                case .songs: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .songs)
+                case .albums: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .albums)
+                case .artists: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .artists)
                 case .folders: LibraryFoldersView(library: library)
                 case .queue: QueueView(playback: store, queue: queue, library: library)
                 case .playlists:
-                    PlaylistsView(playback: store, store: playlists, queue: queue, library: library)
+                    PlaylistsView(playback: store, store: playlists, queue: queue, library: library, kind: .regular)
+                case .workPlaylists:
+                    PlaylistsView(playback: store, store: playlists, queue: queue, library: library, kind: .work)
                 case .favorites:
                     ListeningView(
                         playback: store, store: listening, queue: queue,
@@ -68,8 +91,13 @@ struct DLNAContentView: View {
                         playback: store, store: listening, queue: queue,
                         library: library, playlists: playlists, mode: .history
                     )
+                case .analytics:
+                    AnalyticsView(playback: store, queue: queue, library: library, store: analytics)
+                case .genrePresets: GenreDisplayPresetsView(store: genrePresets, library: library)
                 case .backup: BackupView(store: backup)
                 case .myMusic: MyMusicTransferView(store: myMusic)
+                case .myMusicStatus: MyMusicStatusView(store: myMusicStatus)
+                case .developer: MyMusicJSONEditorView(store: developer)
                 case .playback: PlaybackView(store: store, queue: queue, library: library)
                 }
             }
@@ -92,24 +120,61 @@ struct DLNAContentView: View {
                 .padding(.vertical, 8)
                 .background(.bar)
             }
-        }
-        .inspector(isPresented: $queueInspectorVisible) {
-            QueueView(playback: store, queue: queue, library: library)
-                .inspectorColumnWidth(min: 260, ideal: 340, max: 480)
-        }
-        .toolbar {
-            Button(queueInspectorVisible ? "再生キューを閉じる" : "再生キューを開く", systemImage: "sidebar.trailing") {
-                queueInspectorVisible.toggle()
             }
-            .accessibilityHint("再生キューのインスペクタを切り替えます")
+            .inspector(isPresented: inspectorPresentation) {
+                QueueView(playback: store, queue: queue, library: library)
+                    .inspectorColumnWidth(min: 260, ideal: 340, max: 480)
+            }
+            .toolbar {
+                Button(queueButtonTitle, systemImage: queueButtonIcon) {
+                    if usesQueueInspector {
+                        queueInspectorVisible.toggle()
+                    } else {
+                        store.destination = .queue
+                    }
+                }
+                .accessibilityHint(
+                    usesQueueInspector
+                        ? "再生キューのインスペクタを切り替えます"
+                        : "メイン領域に再生キューを表示します"
+                )
+            }
+            .alert("再生を再開しますか？", isPresented: Binding(
+                get: { recovery.shouldAskToResume }, set: { if !$0 { recovery.declineResume() } }
+            )) {
+                Button("再開") { Task { await recovery.resume() } }
+                Button("今はしない", role: .cancel) { recovery.declineResume() }
+            } message: { Text("スリープまたは通信切断前に再生中だった曲を、現在の再生キュー位置から再開します。音量は変更しません。") }
+            .onAppear { updateWindowLayout(for: window.size) }
+            .onChange(of: window.size) { _, size in updateWindowLayout(for: size) }
         }
-        .alert("再生を再開しますか？", isPresented: Binding(
-            get: { recovery.shouldAskToResume }, set: { if !$0 { recovery.declineResume() } }
-        )) {
-            Button("再開") { Task { await recovery.resume() } }
-            Button("今はしない", role: .cancel) { recovery.declineResume() }
-        } message: { Text("スリープまたは通信切断前に再生中だった曲を、現在の再生キュー位置から再開します。音量は変更しません。") }
-        .frame(minWidth: 680, minHeight: 520)
+        .frame(minWidth: 760, minHeight: 460)
+    }
+
+    private var inspectorPresentation: Binding<Bool> {
+        Binding(
+            get: { usesQueueInspector && queueInspectorVisible },
+            set: { if usesQueueInspector { queueInspectorVisible = $0 } }
+        )
+    }
+
+    private var queueButtonTitle: String {
+        guard usesQueueInspector else { return "再生キューを表示" }
+        return queueInspectorVisible ? "再生キューを閉じる" : "再生キューを開く"
+    }
+
+    private var queueButtonIcon: String {
+        usesQueueInspector ? "sidebar.trailing" : "list.number"
+    }
+
+    @ViewBuilder
+    private func sidebarSectionHeader(_ title: String) -> some View {
+        if !usesCompactSidebar { Text(title) }
+    }
+
+    private func updateWindowLayout(for size: CGSize) {
+        usesQueueInspector = size.width >= 1_180
+        usesCompactSidebar = size.height < 620
     }
 
     private var recoveryStatus: String {
@@ -138,7 +203,7 @@ private struct PlaybackErrorBanner: View {
             Spacer()
             Button("再試行") {
                 Task {
-                    if store.selectedDevice == nil { await store.discoverRenderers() }
+                    if !store.hasSelectedOutput { await store.discoverRenderers() }
                     else { await store.refreshState() }
                 }
             }
@@ -157,6 +222,7 @@ private struct MainNowPlayingBar: View {
     @Bindable var library: LibraryStore
     @Bindable var queue: QueueStore
     @Bindable var listening: ListeningStore
+    @Environment(\.homeStereoTheme) private var theme
     @State private var pendingSeek: Double = 0
     @State private var isSeeking = false
     @State private var pendingVolume: Double = 0
@@ -169,7 +235,18 @@ private struct MainNowPlayingBar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(.ultraThinMaterial)
+        .background {
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                if theme != .system && theme != .simpleDark {
+                    LinearGradient(
+                        colors: [theme.accent.opacity(0.11), .clear, theme.accent.opacity(0.04)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                }
+            }
+        }
         .accessibilityElement(children: .contain)
         .onAppear {
             synchronizePendingSeek(nowPlaying.elapsed)
@@ -249,6 +326,12 @@ private struct MainNowPlayingBar: View {
                 .disabled(store.isBusy || store.playbackState == .playing)
                 .help(synchronizationCheckHelp)
                 .accessibilityHint("左右のクリックが中央で一つに聞こえるか確認します")
+                Button("ステレオ通信をリセット", systemImage: "arrow.triangle.2.circlepath") {
+                    Task { await store.resetStereoConnection() }
+                }
+                .disabled(store.isBusy || store.isStereoSynchronizationCheckActive || store.media == nil)
+                .help("遅延設定は保持したまま左右の通信を作り直し、再生中なら現在の曲を先頭から再開")
+                .accessibilityHint("左右のHTTP配信と再生URIを破棄して新しく接続します")
             }
             Button("前の曲", systemImage: "backward.fill") { Task { await queue.previous() } }
                 .disabled(!nowPlaying.isQueueTrack || store.isBusy)
@@ -279,21 +362,18 @@ private struct MainNowPlayingBar: View {
         VStack(alignment: .trailing, spacing: 3) {
             rendererMenu
             if showsVolume { audioLevelControls }
-            HStack(spacing: 5) {
-                Image(systemName: stateIcon)
-                Text(stateLabel)
-                if nowPlaying.hasMedia {
-                    Text("\(formatPlaybackTime(nowPlaying.elapsed)) / \(formatPlaybackTime(nowPlaying.duration))")
-                }
-            }
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
         }
         .font(.caption)
     }
 
     private var rendererMenu: some View {
         Menu {
+            Button {
+                store.selectThisMac()
+            } label: {
+                Label("このMac", systemImage: store.isThisMacSelected ? "checkmark" : "desktopcomputer")
+            }
+            Divider()
             if store.devices.isEmpty {
                 Text(store.isDiscovering ? "スピーカーを検索中…" : "スピーカーが見つかりません")
             } else {
@@ -324,36 +404,50 @@ private struct MainNowPlayingBar: View {
             }
             .disabled(store.isDiscovering)
         } label: {
-            Label(store.selectedOutputName, systemImage: store.isSonyStereoSelected ? "hifispeaker.2.fill" : "hifispeaker")
+            Label(store.selectedOutputName, systemImage: outputSystemImage)
                 .lineLimit(1)
         }
         .menuStyle(.borderlessButton)
-        .help("再生先のスピーカーを選択")
-        .accessibilityLabel("出力先スピーカー")
+        .help("再生先を選択")
+        .accessibilityLabel("出力先")
         .accessibilityValue(store.selectedOutputName)
     }
 
+    private var outputSystemImage: String {
+        if store.isThisMacSelected { return "desktopcomputer" }
+        return store.isSonyStereoSelected ? "hifispeaker.2.fill" : "hifispeaker"
+    }
+
     private var audioLevelControls: some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: pendingVolume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+        Group {
+            if store.isThisMacSelected {
+                Label("音量キーで調整", systemImage: "speaker.wave.2")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                Slider(value: $pendingVolume, in: 0...100, step: 1) { editing in
-                    if !editing { Task { await store.setVolume(pendingVolume) } }
+                    .help("音量はmacOSのシステム出力で調整します")
+            } else {
+                VStack(alignment: .trailing, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: pendingVolume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            .foregroundStyle(.secondary)
+                        Slider(value: $pendingVolume, in: 0...100, step: 1) { editing in
+                            if !editing { Task { await store.setVolume(pendingVolume) } }
+                        }
+                        .frame(width: 168)
+                        .accessibilityLabel("スピーカー音量")
+                        .accessibilityValue("\(Int(pendingVolume))パーセント")
+                        Text("\(Int(pendingVolume))%")
+                            .font(.caption.monospacedDigit())
+                            .frame(width: 34, alignment: .trailing)
+                    }
+                    if store.isSonyStereoSelected {
+                        StereoBalanceControl(store: store, sliderWidth: 168)
+                    }
                 }
-                .frame(width: 112)
-                .accessibilityLabel("スピーカー音量")
-                .accessibilityValue("\(Int(pendingVolume))パーセント")
-                Text("\(Int(pendingVolume))%")
-                    .font(.caption.monospacedDigit())
-                    .frame(width: 34, alignment: .trailing)
-            }
-            if store.isSonyStereoSelected {
-                StereoBalanceControl(store: store, sliderWidth: 112)
+                .disabled(!store.canControlSelectedOutputVolume || store.isBusy)
+                .help(store.isSonyStereoSelected ? "マスター音量と左右バランスを変更" : "スピーカーの音量を変更")
             }
         }
-        .disabled(store.selectedDevice?.description?.renderingControl == nil || store.isBusy)
-        .help(store.isSonyStereoSelected ? "マスター音量と左右バランスを変更" : "スピーカーの音量を変更")
     }
 
     private var seekControl: some View {
@@ -407,7 +501,7 @@ private struct MainNowPlayingBar: View {
 
     private var emptySubtitle: String {
         if nowPlaying.state == .unknown { return "スピーカーとの通信を確認してください" }
-        return store.selectedDevice == nil ? "先にスピーカーを選んでください" : "ライブラリから曲を選んでください"
+        return !store.hasSelectedOutput ? "先に出力先を選んでください" : "ライブラリから曲を選んでください"
     }
 
     private var trackSubtitle: String {
@@ -419,8 +513,8 @@ private struct MainNowPlayingBar: View {
     }
 
     private var playbackDisabledReason: String? {
-        if store.selectedDevice == nil { return "先に再生先のスピーカーを選んでください" }
-        if store.selectedDevice?.supportsAVTransport != true { return "選択した機器は再生操作に対応していません" }
+        if !store.hasSelectedOutput { return "先に再生先を選んでください" }
+        if !store.canPlaySelectedOutput { return "選択した機器は再生操作に対応していません" }
         if !nowPlaying.hasMedia { return "先にライブラリから曲を選んでください" }
         if store.isBusy { return "スピーカーの応答を待っています" }
         return nil
@@ -436,7 +530,7 @@ private struct MainNowPlayingBar: View {
         if !nowPlaying.hasMedia { return "再生中の曲がありません" }
         if !nowPlaying.duration.isFinite || nowPlaying.duration <= 0 { return "曲の長さを確認できないため移動できません" }
         if nowPlaying.state == .unknown { return "スピーカーとの通信状態を確認できないため移動できません" }
-        if store.selectedDevice?.description?.avTransport == nil { return "選択した機器は再生位置の変更に対応していません" }
+        if !store.canSeekSelectedOutput { return "選択した出力先は再生位置の変更に対応していません" }
         if store.isBusy { return "スピーカーの応答を待っています" }
         return nil
     }
@@ -451,27 +545,6 @@ private struct MainNowPlayingBar: View {
         pendingSeek = min(max(0, finiteValue), seekUpperBound)
     }
 
-    private var stateLabel: String {
-        switch nowPlaying.state {
-        case .empty: "曲なし"
-        case .loading: "読込中"
-        case .stopped: "停止中"
-        case .playing: "再生中"
-        case .paused: "一時停止"
-        case .unknown: "通信不明"
-        }
-    }
-
-    private var stateIcon: String {
-        switch nowPlaying.state {
-        case .empty: "music.note"
-        case .loading: "hourglass"
-        case .stopped: "stop.fill"
-        case .playing: "play.fill"
-        case .paused: "pause.fill"
-        case .unknown: "wifi.exclamationmark"
-        }
-    }
 }
 
 private func formatPlaybackTime(_ seconds: TimeInterval) -> String {
@@ -518,8 +591,8 @@ private struct DevicesView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: store.selectedDevice == nil ? "1.circle.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(store.selectedDevice == nil ? Color.accentColor : Color.green)
+                Image(systemName: !store.hasSelectedOutput ? "1.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(!store.hasSelectedOutput ? Color.accentColor : Color.green)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(headerTitle)
                         .font(.headline)
@@ -527,7 +600,7 @@ private struct DevicesView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if store.selectedDevice?.supportsAVTransport == true {
+                if store.canPlaySelectedOutput {
                     Button("曲を選ぶ", systemImage: "music.note") { showSongs() }
                         .buttonStyle(.borderedProminent)
                 }
@@ -627,6 +700,31 @@ private struct DevicesView: View {
                 .background(store.isSonyStereoSelected ? Color.green.opacity(0.08) : Color.accentColor.opacity(0.06))
                 Divider()
             }
+            Button {
+                store.selectThisMac()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "desktopcomputer")
+                        .font(.title2)
+                        .foregroundStyle(store.isThisMacSelected ? Color.green : Color.accentColor)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("このMac").font(.headline)
+                        Text("macOSで選択中のサウンド出力・標準の音量キーを使用")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if store.isThisMacSelected {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        Text("選択").foregroundStyle(.tint)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(12)
+            .background(store.isThisMacSelected ? Color.green.opacity(0.08) : Color.accentColor.opacity(0.04))
+            Divider()
             HSplitView {
                 List(store.devices, selection: Binding(get: { store.selectedDeviceID }, set: { store.selectDevice($0) })) { device in
                     HStack(spacing: 12) {
@@ -657,27 +755,32 @@ private struct DevicesView: View {
                 }
                 .frame(minWidth: 210, idealWidth: 300)
                 ScrollView {
-                    if let device = store.selectedDevice {
+                    if store.isThisMacSelected {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Image(systemName: "desktopcomputer")
+                                .font(.system(size: 44)).foregroundStyle(.tint)
+                            Text("このMac").font(.title2.bold())
+                            Text("macOSのサウンド設定で選択されている出力先から再生します。音量はキーボードの標準音量キー、コントロールセンター、またはシステム設定で調整できます。")
+                                .foregroundStyle(.secondary)
+                            Button("曲を選ぶ", systemImage: "music.note") { showSongs() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(28)
+                    } else if let device = store.selectedDevice {
                         SpeakerDetailView(device: device, status: status(for: device), lastDiscoveryAt: store.lastDiscoveryAt, showSongs: showSongs)
                             .padding(28)
                     }
-                    else { ContentUnavailableView("スピーカーを選択", systemImage: "hifispeaker", description: Text("左の一覧から再生先を選んでください。")) }
+                    else { ContentUnavailableView("出力先を選択", systemImage: "speaker.wave.2", description: Text("このMac、または左の一覧にあるスピーカーを選んでください。")) }
                 }
                 .frame(minWidth: 240, idealWidth: 420)
             }
         }
-        .navigationTitle("スピーカー")
+        .navigationTitle("出力先")
         .toolbar {
             Button(store.isDiscovering ? "検索中…" : "再検索", systemImage: "arrow.clockwise") { Task { await store.discoverRenderers() } }
                 .disabled(store.isDiscovering)
                 .help("同じネットワーク上のスピーカーをもう一度探します")
-        }
-        .overlay {
-            if store.isDiscovering && store.devices.isEmpty {
-                ProgressView("スピーカーを検索中…")
-            } else if !store.isDiscovering && store.devices.isEmpty {
-                ContentUnavailableView("スピーカーが見つかりません", systemImage: "hifispeaker.slash", description: Text("スピーカーとMacが同じネットワークに接続されていることを確認して、再検索してください。"))
-            }
         }
         .safeAreaInset(edge: .bottom) {
             if let lastDiscoveryAt = store.lastDiscoveryAt {
@@ -693,14 +796,16 @@ private struct DevicesView: View {
     }
 
     private var headerTitle: String {
+        if store.isThisMacSelected { return "このMacを再生先に選択中" }
         if store.isSonyStereoSelected { return "Sonyステレオを再生先に選択中" }
         if let device = store.selectedDevice { return "\(device.friendlyName)を再生先に選択中" }
-        return "最初に再生先のスピーカーを選択"
+        return "最初に再生先を選択"
     }
 
     private var headerSubtitle: String {
+        if store.isThisMacSelected { return "macOSのサウンド出力と標準音量キーを使って再生します。" }
         if store.isSonyStereoSelected { return "LEFT／RIGHT割り当てを確認して、ライブラリから曲を選びます。" }
-        return store.selectedDevice == nil ? "一覧から1台選ぶと、次に曲を選べます。" : "次はライブラリから曲を選びます。"
+        return !store.hasSelectedOutput ? "一覧から出力先を選ぶと、次に曲を選べます。" : "次はライブラリから曲を選びます。"
     }
 
     private func status(for device: RendererDevice) -> SpeakerConnectionStatus {
@@ -846,7 +951,7 @@ private struct PlaybackView: View {
                             Text(album).font(.subheadline).foregroundStyle(.tertiary).lineLimit(1)
                         }
                         HStack(spacing: 10) {
-                            Image(systemName: store.isSonyStereoSelected ? "hifispeaker.2.fill" : "hifispeaker.fill")
+                            Image(systemName: store.isThisMacSelected ? "desktopcomputer" : (store.isSonyStereoSelected ? "hifispeaker.2.fill" : "hifispeaker.fill"))
                             Text(store.selectedOutputName)
                             Button("変更") { store.destination = .devices }.buttonStyle(.link)
                         }
@@ -893,37 +998,46 @@ private struct PlaybackView: View {
                 .labelStyle(.iconOnly)
 
                 GroupBox {
-                    VStack(spacing: 10) {
+                    if store.isThisMacSelected {
                         HStack(spacing: 12) {
                             Image(systemName: "speaker.wave.2")
-                            Slider(value: $pendingVolume, in: 0...100, step: 1) { editing in
-                                if !editing { Task { await store.setVolume(pendingVolume) } }
+                            Text("キーボードの標準音量キーまたはmacOSのコントロールセンターで調整します。")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                    } else {
+                        VStack(spacing: 10) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "speaker.wave.2")
+                                Slider(value: $pendingVolume, in: 0...100, step: 1) { editing in
+                                    if !editing { Task { await store.setVolume(pendingVolume) } }
+                                }
+                                .accessibilityLabel("スピーカー音量")
+                                .accessibilityValue("\(Int(pendingVolume))パーセント")
+                                Text("\(Int(pendingVolume))%")
+                                    .monospacedDigit()
+                                    .frame(width: 42, alignment: .trailing)
                             }
-                            .accessibilityLabel("スピーカー音量")
-                            .accessibilityValue("\(Int(pendingVolume))パーセント")
-                            Text("\(Int(pendingVolume))%")
-                                .monospacedDigit()
-                                .frame(width: 42, alignment: .trailing)
+                            if store.isSonyStereoSelected {
+                                StereoBalanceControl(store: store, sliderWidth: 260)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                            }
                         }
-                        if store.isSonyStereoSelected {
-                            StereoBalanceControl(store: store, sliderWidth: 260)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                        }
+                        .disabled(!store.canControlSelectedOutputVolume)
                     }
-                    .disabled(store.selectedDevice?.description?.renderingControl == nil)
                 } label: {
-                    Text(store.isSonyStereoSelected ? "音量と左右バランス" : "音量")
+                    Text(store.isThisMacSelected ? "システム音量" : (store.isSonyStereoSelected ? "音量と左右バランス" : "音量"))
                 }
 
                 DisclosureGroup("接続と診断") {
                     VStack(alignment: .leading, spacing: 12) {
-                        LabeledContent("スピーカー", value: store.selectedOutputName)
+                        LabeledContent("出力先", value: store.selectedOutputName)
                         LabeledContent("再生状態", value: stateLabel)
                         LabeledContent("ファイル形式", value: store.media.map { "\($0.fileExtension) · \($0.mimeType)" } ?? "—")
                         Button("Macの音源ファイルを開く…", systemImage: "folder") { store.chooseFile() }
                         if let error = store.lastError {
                             Divider()
-                            Text("最後の通信エラー").font(.headline)
+                            Text("最後の再生エラー").font(.headline)
                             Text(error.details).foregroundStyle(.red).textSelection(.enabled)
                         }
                         Button("診断ログを書き出す…", systemImage: "doc.badge.arrow.up") { exportDiagnostics() }
@@ -979,11 +1093,11 @@ private struct PlaybackView: View {
         let total = max(0, Int(seconds.rounded())); return String(format: "%d:%02d", total / 60, total % 60)
     }
     private var playbackControlsDisabled: Bool {
-        !nowPlaying.hasMedia || store.selectedDevice?.supportsAVTransport != true || store.isBusy
+        !nowPlaying.hasMedia || !store.canPlaySelectedOutput || store.isBusy
     }
     private var playbackControlsHelp: String {
-        if store.selectedDevice == nil { return "先に再生先のスピーカーを選んでください" }
-        if store.selectedDevice?.supportsAVTransport != true { return "選択した機器は再生操作に対応していません" }
+        if !store.hasSelectedOutput { return "先に再生先を選んでください" }
+        if !store.canPlaySelectedOutput { return "選択した機器は再生操作に対応していません" }
         if store.media == nil { return "先に音源ファイルまたはライブラリの曲を選んでください" }
         if store.isBusy { return "スピーカーの応答を待っています" }
         return "再生または一時停止"

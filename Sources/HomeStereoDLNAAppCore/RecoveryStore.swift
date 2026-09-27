@@ -64,10 +64,20 @@ public final class RecoveryStore {
             Task { await queue.persistForLifecycle(); await listening.flush() }
             playback.prepareForSystemInterruption()
         case .didWake:
+            if playback.isThisMacSelected {
+                if wasPlaying {
+                    state = .readyToResume
+                    shouldAskToResume = true
+                } else {
+                    state = .connected
+                }
+                return
+            }
             state = networkAvailable ? .reconnecting(attempt: 1) : .waitingForNetwork
             if networkAvailable { beginReconnect() }
         case let .networkAvailable(available):
             networkAvailable = available
+            if playback.isThisMacSelected { return }
             if !available {
                 reconnectTask?.cancel()
                 wasPlaying = wasPlaying || playback.playbackState == .playing

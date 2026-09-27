@@ -1,13 +1,14 @@
 import Foundation
 
 public enum MyMusicDocumentKind: String, CaseIterable, Sendable {
-    case library, preferences, playbackEvents
+    case library, preferences, playbackEvents, playlists
 
     public var fileName: String {
         switch self {
         case .library: MyMusicJSONCodec.libraryFileName
         case .preferences: MyMusicJSONCodec.preferencesFileName
         case .playbackEvents: MyMusicJSONCodec.playbackEventsFileName
+        case .playlists: MyMusicJSONCodec.playlistsFileName
         }
     }
 }
@@ -26,14 +27,22 @@ public struct MyMusicImportPreview: Equatable, Sendable {
     public let total: Int
     public let matched: Int
     public let newlyLinked: Int
+    public let relativePathMatches: Int
+    public let fingerprintMatches: Int
+    public let metadataMatches: Int
     public let unchanged: Int
     public let unmatched: Int
     public let ambiguous: Int
+    public let conflicts: Int
     public let invalid: Int
+    public let missingFromSnapshot: Int
     public let pendingUpdates: Int
     public let pendingInserts: Int
     public let duplicates: Int
     public let unresolved: Int
+    public let addedPlaylists: Int
+    public let updatedPlaylists: Int
+    public let importedTracks: Int
     public let details: [MyMusicImportPreviewDetail]
 }
 
@@ -71,6 +80,7 @@ public struct MyMusicTransferService: Sendable {
         case .library: return try await previewLibrary(data)
         case .preferences: return try await previewPreferences(data)
         case .playbackEvents: return try await previewPlaybackEvents(data)
+        case .playlists: return try await previewPlaylists(data)
         }
     }
 
@@ -79,18 +89,27 @@ public struct MyMusicTransferService: Sendable {
         case .library: _ = try await persistence.importLibrary(data)
         case .preferences: _ = try await persistence.importPreferences(data)
         case .playbackEvents: _ = try await persistence.importPlaybackEvents(data)
+        case .playlists: _ = try await persistence.importPlaylists(data)
         }
     }
 
-    public func export(_ kind: MyMusicDocumentKind) async throws -> (data: Data, exported: Int?, unresolved: Int?) {
+    public func export(_ kind: MyMusicDocumentKind) async throws -> (
+        data: Data, exported: Int?, unresolved: Int?, total: Int?, conflicts: Int?
+    ) {
         switch kind {
         case .library:
-            return (try await persistence.exportLibrary(), nil, nil)
+            return (try await persistence.exportLibrary(), nil, nil, nil, nil)
         case .preferences:
-            return (try await persistence.exportPreferences(exportedAt: clock()), nil, nil)
+            return (try await persistence.exportPreferences(exportedAt: clock()), nil, nil, nil, nil)
         case .playbackEvents:
             let result = try await persistence.exportPlaybackEventsWithReport(exportedAt: clock())
-            return (result.data, result.exported, result.unresolved)
+            return (result.data, result.exported, result.unresolved, nil, nil)
+        case .playlists:
+            let result = try await persistence.exportPlaylists()
+            return (
+                result.data, result.exportedTracks, result.missingMyMusicID,
+                result.totalTracks, result.conflictedTracks
+            )
         }
     }
 
@@ -104,9 +123,14 @@ public struct MyMusicTransferService: Sendable {
         return MyMusicImportPreview(
             kind: .library, total: document.tracks.count,
             matched: match.result.matched, newlyLinked: match.result.newlyLinked,
+            relativePathMatches: match.result.relativePath,
+            fingerprintMatches: match.result.fingerprint,
+            metadataMatches: match.result.items.count { $0.matchMethod == .metadataFallback && $0.status == .newlyLinked },
             unchanged: match.result.unchanged, unmatched: match.result.unmatched,
-            ambiguous: match.result.ambiguous, invalid: match.result.invalid,
+            ambiguous: match.result.ambiguous, conflicts: match.result.conflicts,
+            invalid: match.result.invalid, missingFromSnapshot: match.result.missingFromSnapshot,
             pendingUpdates: 0, pendingInserts: 0, duplicates: 0, unresolved: 0,
+            addedPlaylists: 0, updatedPlaylists: 0, importedTracks: 0,
             details: match.result.items.prefix(100).map { item in
                 let record = records[item.myMusicTrackID]
                 return MyMusicImportPreviewDetail(
@@ -156,8 +180,11 @@ public struct MyMusicTransferService: Sendable {
         }
         return MyMusicImportPreview(
             kind: .preferences, total: document.tracks.count, matched: 0, newlyLinked: 0,
-            unchanged: unchanged, unmatched: 0, ambiguous: 0, invalid: 0,
+            relativePathMatches: 0, fingerprintMatches: 0, metadataMatches: 0,
+            unchanged: unchanged, unmatched: 0, ambiguous: 0, conflicts: 0,
+            invalid: 0, missingFromSnapshot: 0,
             pendingUpdates: updates, pendingInserts: 0, duplicates: 0, unresolved: unresolved,
+            addedPlaylists: 0, updatedPlaylists: 0, importedTracks: 0,
             details: details
         )
     }
@@ -188,9 +215,54 @@ public struct MyMusicTransferService: Sendable {
         }
         return MyMusicImportPreview(
             kind: .playbackEvents, total: document.events.count, matched: 0, newlyLinked: 0,
-            unchanged: 0, unmatched: 0, ambiguous: 0, invalid: 0,
+            relativePathMatches: 0, fingerprintMatches: 0, metadataMatches: 0,
+            unchanged: 0, unmatched: 0, ambiguous: 0, conflicts: 0,
+            invalid: 0, missingFromSnapshot: 0,
             pendingUpdates: 0, pendingInserts: inserts, duplicates: duplicates, unresolved: unresolved,
+            addedPlaylists: 0, updatedPlaylists: 0, importedTracks: 0,
             details: details
+        )
+    }
+
+    private func previewPlaylists(_ data: Data) async throws -> MyMusicImportPreview {
+        let document = try MyMusicJSONImportService().importPlaylists(data)
+        let context = try await repository.loadMyMusicPlaylistContext()
+        let existingExternalIDs = Set(context.playlists.compactMap(\.myMusicPlaylistID))
+        let existingLocalIDs = Set(context.playlists.map(\.id))
+        let links = Dictionary(grouping: context.links, by: \.myMusicTrackID)
+        var added = 0, updated = 0, imported = 0, unresolved = 0, conflicts = 0
+        var details: [MyMusicImportPreviewDetail] = []
+        for playlist in document.playlists {
+            if existingExternalIDs.contains(playlist.playlistID) || existingLocalIDs.contains(playlist.playlistID) {
+                updated += 1
+            } else { added += 1 }
+            for track in playlist.tracks {
+                let candidates = links[track.trackID] ?? []
+                let result: String
+                let reason: String?
+                if candidates.isEmpty {
+                    unresolved += 1; result = "unresolved"; reason = "MyMusic trackIDに対応する曲がありません"
+                } else if candidates.count != 1 {
+                    conflicts += 1; result = "conflict"; reason = "MyMusic trackIDの対応が競合しています"
+                } else {
+                    imported += 1; result = "import"; reason = nil
+                }
+                if details.count < 100 {
+                    details.append(MyMusicImportPreviewDetail(
+                        id: "\(playlist.playlistID.uuidString)-\(details.count)",
+                        title: track.title ?? playlist.name, artist: track.artist ?? "",
+                        trackID: track.trackID, result: result, reason: reason
+                    ))
+                }
+            }
+        }
+        return MyMusicImportPreview(
+            kind: .playlists, total: document.playlists.count, matched: 0, newlyLinked: 0,
+            relativePathMatches: 0, fingerprintMatches: 0, metadataMatches: 0,
+            unchanged: 0, unmatched: 0, ambiguous: 0, conflicts: conflicts, invalid: 0,
+            missingFromSnapshot: 0, pendingUpdates: 0, pendingInserts: 0, duplicates: 0,
+            unresolved: unresolved, addedPlaylists: added, updatedPlaylists: updated,
+            importedTracks: imported, details: details
         )
     }
 
@@ -207,6 +279,9 @@ public struct MyMusicTransferService: Sendable {
         case .preferences:
             matches = object["schemaVersion"] != nil && object["tracks"] is [Any] && object["events"] == nil
         case .playbackEvents: matches = object["schemaVersion"] != nil && object["events"] is [Any]
+        case .playlists:
+            matches = object["version"] != nil
+                && (object["playlists"] is [Any] || (object["playlistID"] != nil && object["tracks"] is [Any]))
         }
         guard matches else { throw MyMusicTransferServiceError.wrongDocumentType(expected: expected) }
     }

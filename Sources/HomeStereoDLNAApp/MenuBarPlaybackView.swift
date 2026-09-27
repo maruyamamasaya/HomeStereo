@@ -27,7 +27,7 @@ struct MenuBarPlaybackView: View {
     }
 
     private var playbackDisabled: Bool {
-        !queue.nowPlaying.hasMedia || playback.selectedDevice?.supportsAVTransport != true || playback.isBusy
+        !queue.nowPlaying.hasMedia || !playback.canPlaySelectedOutput || playback.isBusy
     }
 
     private var emptyTitle: String {
@@ -84,8 +84,8 @@ struct MiniPlayerView: View {
     private var playbackDisabled: Bool { playbackDisabledReason != nil }
 
     private var playbackDisabledReason: String? {
-        if playback.selectedDevice == nil { return "先に再生先のスピーカーを選んでください" }
-        if playback.selectedDevice?.supportsAVTransport != true { return "選択した機器は再生操作に対応していません" }
+        if !playback.hasSelectedOutput { return "先に再生先を選んでください" }
+        if !playback.canPlaySelectedOutput { return "選択した機器は再生操作に対応していません" }
         if !queue.nowPlaying.hasMedia { return "先に曲を選んでください" }
         if playback.isBusy { return "Rendererの応答を待っています" }
         return nil

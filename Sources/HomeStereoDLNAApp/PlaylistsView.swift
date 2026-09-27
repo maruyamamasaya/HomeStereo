@@ -11,39 +11,44 @@ struct PlaylistsView: View {
     @Bindable var store: PlaylistStore
     @Bindable var queue: QueueStore
     @Bindable var library: LibraryStore
+    let kind: PlaylistKind
     @State private var newName = ""
     @State private var renameValue = ""
     @State private var showsCreateDialog = false
     @State private var showsRenameDialog = false
     @State private var confirmsPlaylistDelete = false
     @State private var confirmsItemDelete = false
+    @State private var playlistForTrackPicker: Playlist?
 
     var body: some View {
         HSplitView {
             playlistSidebar
-                .frame(minWidth: 200, idealWidth: 250)
+                .frame(minWidth: 220, idealWidth: 260, maxWidth: 320, maxHeight: .infinity)
 
-            if let playlist = store.selectedPlaylist {
+            if let playlist = selectedPlaylist {
                 playlistDetail(playlist)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
                     Label("プレイリストを選択", systemImage: "music.note.list")
                 } description: {
-                    Text(store.playlists.isEmpty
-                         ? "プレイリストを作成すると、好きな曲順を保存できます。"
+                    Text(visiblePlaylists.isEmpty
+                         ? emptyDescription
                          : "左の一覧からプレイリストを選んでください。")
                 } actions: {
-                    if store.playlists.isEmpty {
-                        Button("プレイリストを作成", systemImage: "plus") { beginCreate() }
+                    if visiblePlaylists.isEmpty {
+                        Button(createTitle, systemImage: "plus") { beginCreate() }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle("プレイリスト")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(navigationTitle)
         .toolbar {
-            Button("プレイリストを作成", systemImage: "plus") { beginCreate() }
-            Button("M3U8を読み込む", systemImage: "square.and.arrow.down") { Task { await store.importM3U8() } }
-            if let playlist = store.selectedPlaylist {
+            Button(createTitle, systemImage: "plus") { beginCreate() }
+            Button("M3U8を読み込む", systemImage: "square.and.arrow.down") { Task { await store.importM3U8(kind: kind) } }
+            if let playlist = selectedPlaylist {
                 playlistManagementMenu(playlist)
             }
         }
@@ -52,7 +57,7 @@ struct PlaylistsView: View {
             Button("作成") {
                 let name = newName
                 newName = ""
-                Task { await store.create(name: name) }
+                Task { await store.create(name: name, kind: kind) }
             }
             .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("キャンセル", role: .cancel) { newName = "" }
@@ -62,7 +67,7 @@ struct PlaylistsView: View {
         .alert("プレイリスト名を変更", isPresented: $showsRenameDialog) {
             TextField("プレイリスト名", text: $renameValue)
             Button("変更") {
-                guard let playlist = store.selectedPlaylist else { return }
+                guard let playlist = selectedPlaylist else { return }
                 Task { await store.rename(id: playlist.id, name: renameValue) }
             }
             .disabled(renameValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -86,31 +91,35 @@ struct PlaylistsView: View {
             Text("音源ファイルは削除されません。")
         }
         .confirmationDialog("選択した曲をプレイリストから削除しますか？", isPresented: $confirmsItemDelete) {
-            if let playlist = store.selectedPlaylist {
+            if let playlist = selectedPlaylist {
                 Button("プレイリストから削除", role: .destructive) { Task { await store.removeSelected(from: playlist.id) } }
             }
         } message: {
             Text("音源ファイルは削除されません。")
         }
+        .sheet(item: $playlistForTrackPicker) { playlist in
+            PlaylistTrackPicker(store: store, playlist: playlist, tracks: library.tracks)
+        }
+        .onAppear { store.activate(kind) }
     }
 
     private var playlistSidebar: some View {
         Group {
-            if store.playlists.isEmpty {
-                ContentUnavailableView("プレイリストなし", systemImage: "music.note.list")
+            if visiblePlaylists.isEmpty {
+                ContentUnavailableView(emptyTitle, systemImage: kind == .work ? "timer" : "music.note.list")
             } else {
-                List(store.playlists, selection: $store.selectedPlaylistIDs) { playlist in
+                List(visiblePlaylists, selection: $store.selectedPlaylistIDs) { playlist in
                     playlistSidebarRow(playlist)
                         .tag(playlist.id)
                         .dropDestination(for: String.self) { values, _ in
                             let ids = values.flatMap(TrackDragPayload.decode)
-                            guard !ids.isEmpty else { return false }
+                            guard !ids.isEmpty, store.canAdd(trackIDs: ids, to: playlist.id) else { return false }
                             Task { await store.add(trackIDs: ids, to: playlist.id) }
                             return true
                         }
                         .contextMenu {
                             Button("再生") { Task { await store.play(playlist, shuffled: false) } }
-                                .disabled(playback.selectedDevice?.supportsAVTransport != true)
+                                .disabled(!playback.canPlaySelectedOutput)
                             Button("再生キューの最後に追加") {
                                 Task { await store.appendToQueue(trackIDs: playlist.items.map(\.trackID)) }
                             }
@@ -157,8 +166,9 @@ struct PlaylistsView: View {
                 ContentUnavailableView {
                     Label("曲がありません", systemImage: "music.note")
                 } description: {
-                    Text("ライブラリから曲をドラッグするか、現在の再生キューを追加してください。")
+                    Text("ライブラリから曲を選ぶか、ドラッグまたは現在の再生キューから追加してください。")
                 } actions: {
+                    Button("曲を追加", systemImage: "plus") { playlistForTrackPicker = playlist }
                     Button("現在の再生キューを追加") { Task { await store.addCurrentQueue(to: playlist.id) } }
                         .disabled(queue.items.isEmpty)
                 }
@@ -170,7 +180,7 @@ struct PlaylistsView: View {
         }
         .dropDestination(for: String.self) { values, _ in
             let ids = values.flatMap(TrackDragPayload.decode)
-            guard !ids.isEmpty else { return false }
+            guard !ids.isEmpty, store.canAdd(trackIDs: ids, to: playlist.id) else { return false }
             Task { await store.add(trackIDs: ids, to: playlist.id) }
             return true
         }
@@ -194,16 +204,19 @@ struct PlaylistsView: View {
 
     private func playlistHeaderDetails(_ playlist: Playlist) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("プレイリスト").font(.caption.bold()).foregroundStyle(.secondary)
+            Text(kind == .work ? "作業用プレイリスト" : "プレイリスト")
+                .font(.caption.bold()).foregroundStyle(.secondary)
             Text(playlist.name).font(.system(size: 28, weight: .bold)).lineLimit(2)
             Text(playlistSummary(playlist, compact: false)).font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 Button("再生", systemImage: "play.fill") { Task { await store.play(playlist, shuffled: false) } }
                     .buttonStyle(.borderedProminent)
-                    .disabled(playback.selectedDevice?.supportsAVTransport != true || playableTrackIDs(playlist).isEmpty)
+                    .disabled(!playback.canPlaySelectedOutput || playableTrackIDs(playlist).isEmpty)
                 Button("シャッフル", systemImage: "shuffle") { Task { await store.play(playlist, shuffled: true) } }
                     .buttonStyle(.bordered)
-                    .disabled(playback.selectedDevice?.supportsAVTransport != true || playableTrackIDs(playlist).isEmpty)
+                    .disabled(!playback.canPlaySelectedOutput || playableTrackIDs(playlist).isEmpty)
+                Button("曲を追加", systemImage: "plus") { playlistForTrackPicker = playlist }
+                    .buttonStyle(.bordered)
             }
         }
     }
@@ -249,7 +262,7 @@ struct PlaylistsView: View {
                 .contextMenu {
                     Button("今すぐ再生") { Task { await store.playNow(trackIDs: [item.trackID], startingAt: item.trackID) } }
                         .disabled(
-                            playback.selectedDevice?.supportsAVTransport != true ||
+                            !playback.canPlaySelectedOutput ||
                             store.track(for: item)?.scanState != .available
                         )
                     Button("次に再生") { Task { await store.playNext(trackIDs: [item.trackID]) } }
@@ -283,6 +296,7 @@ struct PlaylistsView: View {
     private func playlistManagementMenu(_ playlist: Playlist) -> some View {
         Menu("プレイリストを管理", systemImage: "ellipsis.circle") {
             Button("名称を変更", systemImage: "pencil") { beginRename(playlist) }
+            Button("ライブラリから曲を追加", systemImage: "plus") { playlistForTrackPicker = playlist }
             Button("現在の再生キューを追加", systemImage: "text.append") {
                 Task { await store.addCurrentQueue(to: playlist.id) }
             }
@@ -303,7 +317,7 @@ struct PlaylistsView: View {
         } else {
             ZStack {
                 LinearGradient(colors: [.purple.opacity(0.75), .pink.opacity(0.72)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: "music.note.list")
+                Image(systemName: kind == .work ? "timer" : "music.note.list")
                     .font(.system(size: max(18, size * 0.3), weight: .semibold))
                     .foregroundStyle(.white)
             }
@@ -344,6 +358,123 @@ struct PlaylistsView: View {
         store.selectedPlaylistIDs = [playlist.id]
         renameValue = playlist.name
         showsRenameDialog = true
+    }
+
+    private var visiblePlaylists: [Playlist] { store.playlists(of: kind) }
+    private var selectedPlaylist: Playlist? { store.selectedPlaylist(of: kind) }
+    private var navigationTitle: String { kind == .work ? "作業用プレイリスト" : "プレイリスト" }
+    private var createTitle: String { kind == .work ? "作業用プレイリストを作成" : "プレイリストを作成" }
+    private var emptyTitle: String { kind == .work ? "作業用プレイリストなし" : "プレイリストなし" }
+    private var emptyDescription: String {
+        kind == .work
+            ? "ジャンルが「作業用BGM」の曲を保存するプレイリストを作成できます。"
+            : "プレイリストを作成すると、好きな曲順を保存できます。"
+    }
+}
+
+private struct PlaylistTrackPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var store: PlaylistStore
+    let playlist: Playlist
+    let tracks: [Track]
+    @State private var searchText = ""
+    @State private var selectedTrackIDs = Set<Track.ID>()
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                HStack {
+                    Text(selectedTrackIDs.isEmpty ? "曲を選択してください" : "\(selectedTrackIDs.count)曲を選択中")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("表示中をすべて選択") {
+                        selectedTrackIDs.formUnion(filteredTracks.map(\.id))
+                    }
+                    .disabled(filteredTracks.isEmpty)
+                    Button("選択解除") { selectedTrackIDs.removeAll() }
+                        .disabled(selectedTrackIDs.isEmpty)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
+
+                if filteredTracks.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                } else {
+                    List(filteredTracks, selection: $selectedTrackIDs) { track in
+                        HStack(spacing: 10) {
+                            Image(systemName: track.scanState == .available ? "music.note" : "exclamationmark.triangle")
+                                .foregroundStyle(track.scanState == .available ? Color.secondary : Color.orange)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(track.title).lineLimit(1)
+                                Text([track.artist, track.album].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            if playlist.items.contains(where: { $0.trackID == track.id }) {
+                                Text("追加済み")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.quaternary, in: Capsule())
+                            }
+                            Text(formatPlaylistDuration(track.duration))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 3)
+                        .tag(track.id)
+                    }
+                }
+            }
+            .navigationTitle("\(playlist.name)に曲を追加")
+            .searchable(text: $searchText, prompt: "曲名、アーティスト、アルバムを検索")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("\(selectedTrackIDs.count)曲を追加") {
+                        let ids = filteredAndSelectedTrackIDs
+                        Task {
+                            await store.add(trackIDs: ids, to: playlist.id)
+                            dismiss()
+                        }
+                    }
+                    .disabled(selectedTrackIDs.isEmpty)
+                }
+            }
+        }
+        .frame(minWidth: 620, minHeight: 520)
+    }
+
+    private var compatibleTracks: [Track] {
+        tracks
+            .filter { playlist.playlistKind.accepts($0) }
+            .sorted {
+                let titleOrder = $0.title.localizedStandardCompare($1.title)
+                if titleOrder != .orderedSame { return titleOrder == .orderedAscending }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+    }
+
+    private var filteredTracks: [Track] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return compatibleTracks }
+        return compatibleTracks.filter { track in
+            [track.title, track.artist, track.album]
+                .compactMap { $0 }
+                .contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private var filteredAndSelectedTrackIDs: [Track.ID] {
+        compatibleTracks.map(\.id).filter { selectedTrackIDs.contains($0) }
     }
 }
 

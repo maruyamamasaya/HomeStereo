@@ -11,7 +11,9 @@ public struct MyMusicJSONImportService: Sendable {
                 trackID: $0.trackID, title: $0.title, artist: $0.artist, album: $0.album,
                 genre: $0.genre, year: $0.year, duration: $0.duration, format: $0.format,
                 favorite: $0.favorite, playCount: $0.playCount, lastPlayedAt: $0.lastPlayedAt,
-                audioFingerprint: $0.audioFingerprint, firstSeenAt: $0.firstSeenAt
+                audioFingerprint: $0.audioFingerprint, firstSeenAt: $0.firstSeenAt,
+                relativePath: $0.relativePath.flatMap(MyMusicJSONCodec.normalizedRelativePath),
+                fileSize: $0.fileSize
             )
         })
     }
@@ -35,6 +37,23 @@ public struct MyMusicJSONImportService: Sendable {
             )
         })
     }
+
+    public func importPlaylists(_ data: Data) throws -> MyMusicPlaylistsImport {
+        let document = try MyMusicJSONCodec.decodePlaylists(data)
+        return MyMusicPlaylistsImport(playlists: document.playlists.map { playlist in
+            MyMusicPlaylistRecord(
+                playlistID: playlist.playlistID, name: playlist.name,
+                createdAt: playlist.createdAt, updatedAt: playlist.updatedAt,
+                kind: playlist.kind, tags: playlist.tags,
+                tracks: playlist.tracks.map {
+                    MyMusicPlaylistTrackRecord(
+                        trackID: $0.trackID, title: $0.title, artist: $0.artist,
+                        album: $0.album, duration: $0.duration
+                    )
+                }
+            )
+        })
+    }
 }
 
 public struct MyMusicJSONExportService: Sendable {
@@ -48,26 +67,84 @@ public struct MyMusicJSONExportService: Sendable {
                     trackID: $0.trackID, title: $0.title, artist: $0.artist, album: $0.album,
                     genre: $0.genre, year: $0.year, duration: $0.duration, format: $0.format,
                     favorite: $0.favorite, playCount: $0.playCount, lastPlayedAt: $0.lastPlayedAt,
-                    audioFingerprint: $0.audioFingerprint, firstSeenAt: $0.firstSeenAt
+                    audioFingerprint: $0.audioFingerprint, firstSeenAt: $0.firstSeenAt,
+                    relativePath: $0.relativePath, fileSize: $0.fileSize
                 )
             }
         ))
     }
 
     /// 現行Library/Listening modelから互換用の派生値を組み立てる。
-    public func exportLibrary(tracks: [Track], favorites: [Favorite], events: [PlaybackEvent]) throws -> Data {
+    public func exportLibrary(
+        tracks: [Track], links: [MyMusicTrackLink], favorites: [Favorite], events: [PlaybackEvent]
+    ) throws -> Data {
         let favoriteIDs = Set(favorites.map(\.trackID))
         let eventsByTrack = Dictionary(grouping: events, by: \.trackID)
-        return try exportLibrary(tracks.map { track in
+        let linksByTrack = Dictionary(uniqueKeysWithValues: links.map { ($0.homeStereoTrackID, $0) })
+        return try exportLibrary(tracks.compactMap { track in
+            guard let link = linksByTrack[track.id] else { return nil }
             let trackEvents = eventsByTrack[track.id] ?? []
             return MyMusicTrackRecord(
-                trackID: track.id, title: track.title, artist: track.artist ?? "",
+                trackID: link.myMusicTrackID, title: track.title, artist: track.artist ?? "",
                 album: track.album, genre: track.genre, year: track.releaseYear, duration: track.duration,
                 format: Self.compatibleFormat(codec: track.codec, fileExtension: track.fileExtension),
                 favorite: favoriteIDs.contains(track.id), playCount: trackEvents.count,
-                lastPlayedAt: trackEvents.map(\.startedAt).max()
+                lastPlayedAt: trackEvents.map(\.startedAt).max(),
+                audioFingerprint: link.audioFingerprint, firstSeenAt: link.firstSeenAt,
+                relativePath: link.relativePath, fileSize: link.fileSize
             )
         })
+    }
+
+    public func exportPlaylists(_ playlists: [MyMusicPlaylistRecord]) throws -> Data {
+        try MyMusicJSONCodec.encodePlaylists(MyMusicPlaylistsDocumentDTO(playlists: playlists.map { playlist in
+            MyMusicPlaylistDTO(
+                name: playlist.name, playlistID: playlist.playlistID,
+                createdAt: playlist.createdAt, updatedAt: playlist.updatedAt,
+                kind: playlist.kind, tags: playlist.tags,
+                tracks: playlist.tracks.map {
+                    MyMusicPlaylistTrackDTO(
+                        trackID: $0.trackID, title: $0.title, artist: $0.artist,
+                        album: $0.album, duration: $0.duration
+                    )
+                }
+            )
+        }))
+    }
+
+    public func exportPlaylists(
+        playlists: [Playlist], tracks: [Track], links: [MyMusicTrackLink]
+    ) throws -> MyMusicPlaylistExportResult {
+        let tracksByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+        let linksByHomeID = Dictionary(grouping: links, by: \.homeStereoTrackID)
+        var total = 0, exported = 0, missing = 0, conflicts = 0
+        let records = playlists.map { playlist in
+            var output: [MyMusicPlaylistTrackRecord] = []
+            for item in playlist.items {
+                total += 1
+                guard let candidates = linksByHomeID[item.trackID], !candidates.isEmpty else {
+                    missing += 1; continue
+                }
+                guard candidates.count == 1, let link = candidates.first else {
+                    conflicts += 1; continue
+                }
+                let track = tracksByID[item.trackID]
+                output.append(MyMusicPlaylistTrackRecord(
+                    trackID: link.myMusicTrackID, title: track?.title,
+                    artist: track?.artist, album: track?.album, duration: track?.duration
+                ))
+                exported += 1
+            }
+            return MyMusicPlaylistRecord(
+                playlistID: playlist.myMusicPlaylistID ?? playlist.id, name: playlist.name,
+                createdAt: playlist.createdAt, updatedAt: playlist.updatedAt,
+                kind: playlist.kind, tags: playlist.tags, tracks: output
+            )
+        }
+        return MyMusicPlaylistExportResult(
+            data: try exportPlaylists(records), totalTracks: total, exportedTracks: exported,
+            missingMyMusicID: missing, conflictedTracks: conflicts
+        )
     }
 
     public func exportPreferences(_ tracks: [MyMusicPreferenceRecord], exportedAt: Date) throws -> Data {

@@ -124,7 +124,7 @@ struct ListeningView: View {
                 systemImage: "clock.arrow.circlepath"
             )
         } else {
-            List(store.events) { event in
+            List(store.recentEvents) { event in
                 trackRow(
                     trackID: event.trackID,
                     detail: "\(event.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(event.outcome == .completed ? "最後まで再生" : "途中まで再生")"
@@ -226,11 +226,11 @@ struct ListeningView: View {
                     Label("ファイルが見つかりません", systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
-                Button("再生", systemImage: "play.fill") {
-                    Task { await queue.playNow(trackIDs: [trackID], source: mode == .favorites ? .favorite : .history) }
+                Button("今すぐ再生", systemImage: "play.fill") {
+                    Task { await queue.playImmediately(trackID: trackID, source: mode == .favorites ? .favorite : .history) }
                 }
                     .labelStyle(.iconOnly)
-                    .disabled(track.scanState != .available || playback.selectedDevice?.supportsAVTransport != true)
+                    .disabled(track.scanState != .available || !playback.canPlaySelectedOutput)
                     .help(rowPlaybackHelp(track))
             } else {
                 Image(systemName: "questionmark.square.dashed")
@@ -270,7 +270,7 @@ struct ListeningView: View {
     }
 
     private var favoritePlaybackDisabled: Bool {
-        availableFavoriteIDs.isEmpty || playback.selectedDevice?.supportsAVTransport != true
+        availableFavoriteIDs.isEmpty || !playback.canPlaySelectedOutput
     }
 
     private var availableFavoriteIDs: [Track.ID] {
@@ -288,15 +288,15 @@ struct ListeningView: View {
     }
 
     private var playbackHelp: String {
-        if playback.selectedDevice == nil { return "先に再生先のスピーカーを選んでください" }
-        if playback.selectedDevice?.supportsAVTransport != true { return "選択した機器では再生できません" }
+        if !playback.hasSelectedOutput { return "先に再生先を選んでください" }
+        if !playback.canPlaySelectedOutput { return "選択した機器では再生できません" }
         return "お気に入りを再生"
     }
 
     private func rowPlaybackHelp(_ track: Track) -> String {
         if track.scanState != .available { return "この曲のファイルが見つかりません" }
-        if playback.selectedDevice == nil { return "先に再生先のスピーカーを選んでください" }
-        if playback.selectedDevice?.supportsAVTransport != true { return "選択した機器では再生できません" }
-        return "\(track.title)を再生"
+        if !playback.hasSelectedOutput { return "先に再生先を選んでください" }
+        if !playback.canPlaySelectedOutput { return "選択した機器では再生できません" }
+        return "\(track.title)を今すぐ再生"
     }
 }

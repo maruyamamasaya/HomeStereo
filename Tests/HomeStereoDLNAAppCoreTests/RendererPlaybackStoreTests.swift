@@ -32,6 +32,54 @@ import Testing
     store.shutdown()
 }
 
+@MainActor
+@Test func thisMacOutputUsesLocalPlayerAndPublishesPlaybackState() async {
+    let localPlayer = FakeLocalAudioPlayer()
+    localPlayer.duration = 123
+    let store = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []),
+        descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(),
+        serverFactory: FakeServerFactory(),
+        controller: FakeController(),
+        localPlayer: localPlayer,
+        pollingInterval: .seconds(60)
+    )
+    let fileURL = URL(fileURLWithPath: "/tmp/home-stereo-local-output.mp3")
+    var finishedCount = 0
+    store.onTrackFinished = { finishedCount += 1 }
+
+    store.selectThisMac()
+    #expect(store.isThisMacSelected)
+    #expect(store.selectedOutputName == "このMac")
+    #expect(store.canPlaySelectedOutput)
+    #expect(store.canSeekSelectedOutput)
+    #expect(!store.canControlSelectedOutputVolume)
+    #expect(store.selectLibraryFile(fileURL, expectedDuration: 120, trackID: UUID()))
+
+    await store.play()
+    #expect(localPlayer.loadedURL == fileURL)
+    #expect(localPlayer.playCount == 1)
+    #expect(store.playbackState == .playing)
+    #expect(store.duration == 123)
+
+    localPlayer.position = 12
+    await store.refreshState()
+    #expect(store.elapsed == 12)
+    await store.pause()
+    #expect(localPlayer.pauseCount == 1)
+    #expect(store.playbackState == .paused)
+    await store.seek(to: 30)
+    #expect(localPlayer.position == 30)
+
+    await store.play()
+    localPlayer.finish()
+    #expect(finishedCount == 1)
+    #expect(store.playbackState == .stopped)
+    #expect(store.elapsed == 123)
+    store.shutdown()
+}
+
 @Test func stereoBalanceKeepsFavoredSideAtMasterVolume() {
     var levels = RendererPlaybackStore.stereoVolumes(master: 40, balance: 0)
     #expect(levels.left == 40)
@@ -84,6 +132,51 @@ import Testing
 }
 
 @MainActor
+@Test func sonyStereoPrewarmsAndReusesPreparedMedia() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("source.wav")
+    try Data("audio".utf8).write(to: source)
+    let nextSource = root.appendingPathComponent("next.wav")
+    try Data("next".utf8).write(to: nextSource)
+    let leftResponse = stereoResponse(address: "192.168.0.105", id: "left-prewarm")
+    let rightResponse = stereoResponse(address: "192.168.0.106", id: "right-prewarm")
+    let preparer = CountingStereoPreparer(root: root)
+    let store = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: [leftResponse, rightResponse]),
+        descriptions: StereoDescriptions(renderers: [
+            leftResponse.location: stereoRenderer(modelName: "SRS-HG10", response: leftResponse),
+            rightResponse.location: stereoRenderer(modelName: "SRS-HG1", response: rightResponse),
+        ]),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(),
+        controller: FakeController(), secondaryController: FakeController(),
+        stereoPreparer: preparer, pollingInterval: .seconds(60)
+    )
+
+    await store.discoverRenderers()
+    store.selectSonyStereo()
+    #expect(store.selectLibraryFile(source, expectedDuration: 120, trackID: UUID()))
+    for _ in 0..<20 where preparer.preparationCount == 0 {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(preparer.preparationCount == 1)
+
+    await store.play()
+    #expect(preparer.preparationCount == 1)
+    #expect(store.selectLibraryFile(source, expectedDuration: 120, trackID: UUID()))
+    await store.play()
+    #expect(preparer.preparationCount == 1)
+
+    await store.prewarmStereoMedia(fileURL: nextSource)
+    #expect(preparer.preparationCount == 2)
+    #expect(store.selectLibraryFile(nextSource, expectedDuration: 120, trackID: UUID()))
+    await store.play()
+    #expect(preparer.preparationCount == 2)
+    store.shutdown()
+}
+
+@MainActor
 @Test func synchronizationCheckPlaysWithoutChangingTheSelectedTrackOrAdvancingQueue() async {
     let leftResponse = stereoResponse(address: "192.168.0.105", id: "left-sync")
     let rightResponse = stereoResponse(address: "192.168.0.106", id: "right-sync")
@@ -125,6 +218,52 @@ import Testing
 
     #expect(!store.isStereoSynchronizationCheckActive)
     #expect(trackFinishedCount == 0)
+    store.shutdown()
+}
+
+@MainActor
+@Test func stereoConnectionResetRebuildsBothStreamsAndKeepsCalibration() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("source.wav")
+    try Data("audio".utf8).write(to: source)
+    let leftResponse = stereoResponse(address: "192.168.0.105", id: "left-reset")
+    let rightResponse = stereoResponse(address: "192.168.0.106", id: "right-reset")
+    let leftController = FakeController()
+    let rightController = FakeController()
+    let preparer = CountingStereoPreparer(root: root)
+    let store = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: [leftResponse, rightResponse]),
+        descriptions: StereoDescriptions(renderers: [
+            leftResponse.location: stereoRenderer(modelName: "SRS-HG10", response: leftResponse),
+            rightResponse.location: stereoRenderer(modelName: "SRS-HG1", response: rightResponse),
+        ]),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(),
+        controller: leftController, secondaryController: rightController,
+        stereoPreparer: preparer, pollingInterval: .seconds(60)
+    )
+
+    await store.discoverRenderers()
+    store.selectSonyStereo()
+    store.setStereoChannelsSwapped(true)
+    store.setStereoDelayedChannel(.right)
+    store.setStereoDelayMilliseconds(275)
+    #expect(store.selectLibraryFile(source, expectedDuration: 120, trackID: UUID()))
+    await store.play()
+    await leftController.clearActions()
+    await rightController.clearActions()
+
+    await store.resetStereoConnection()
+
+    #expect(store.playbackState == .playing)
+    #expect(store.elapsed == 0)
+    #expect(store.stereoChannelsSwapped)
+    #expect(store.stereoDelayedChannel == .right)
+    #expect(store.stereoDelayMilliseconds == 275)
+    #expect(preparer.preparationCount == 2)
+    #expect(await leftController.actions == ["Stop", "SetAVTransportURI", "Play"])
+    #expect(await rightController.actions == ["Stop", "SetAVTransportURI", "Play"])
     store.shutdown()
 }
 
@@ -231,6 +370,7 @@ import Testing
     await controller.setFailsTransport(true)
     await store.refreshState()
     #expect(store.lastError == nil)
+    await store.refreshState()
     await store.refreshState()
     #expect(store.lastError != nil)
     store.dismissError()
@@ -528,6 +668,9 @@ import Testing
     await store.refreshState()
     #expect(failures == 0)
     await store.refreshState()
+    #expect(failures == 0)
+    #expect(store.playbackState == .playing)
+    await store.refreshState()
     #expect(completions == 1)
     #expect(failures == 1)
     #expect(store.playbackState == .unknown)
@@ -572,6 +715,31 @@ import Testing
     #expect(store.media?.title == "new")
     #expect(store.duration == 300)
     #expect(store.playbackState == .stopped)
+}
+
+@MainActor
+@Test func pollingReadsTransportAndPositionConcurrentlyAndThrottlesVolume() async throws {
+    let response = sampleResponse()
+    let controller = FakeController()
+    let store = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: [response]), descriptions: FakeDescriptions(renderer: sampleRenderer()),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: controller,
+        pollingInterval: .seconds(60)
+    )
+    await store.discoverRenderers()
+    store.selectDevice(store.devices[0].id)
+    try await Task.sleep(for: .milliseconds(30))
+    await controller.resetReadMetrics()
+    await controller.setTransportDelay(.milliseconds(20))
+    await controller.setPositionDelay(.milliseconds(20))
+
+    for _ in 0..<6 { await store.refreshState() }
+
+    #expect(await controller.transportReadCount == 6)
+    #expect(await controller.positionReadCount == 6)
+    #expect(await controller.volumeReadCount <= 2)
+    #expect(await controller.maximumConcurrentReads == 2)
+    store.shutdown()
 }
 
 @MainActor
@@ -647,6 +815,7 @@ import Testing
     )
     await store.discoverRenderers(); store.selectDevice(store.devices[0].id); store.chooseFile(); await store.play()
     await controller.setFailsTransport(true)
+    await store.refreshState()
     await store.refreshState()
     await store.refreshState()
     let report = String(decoding: try store.diagnosticReportData(), as: UTF8.self)
@@ -726,6 +895,195 @@ import Testing
     #expect(queue.items.map(\.trackID) == [ids[0], ids[2], ids[3], ids[1]])
     #expect(queue.currentIndex == 0)
     #expect(queue.selectedItemIDs == Set(queue.items[1...2].map(\.id)))
+}
+
+@MainActor
+@Test func generatedQueueIsLimitedToOneHundredAndCanMoveSingleItems() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("queue-limit.sqlite3"))
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FakeDescriptions(renderer: sampleRenderer()),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
+    )
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(), repository: repository)
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    let ids = (0..<30_000).map { _ in UUID() }
+
+    await queue.playNow(trackIDs: ids, startingAt: ids[15_000], source: .library)
+
+    #expect(queue.items.count == QueueStore.maximumItemCount)
+    #expect(queue.items.contains { $0.trackID == ids[15_000] })
+    let movedID = queue.items[1].id
+    let movedTrackID = queue.items[1].trackID
+    await queue.moveItem(id: movedID, by: -1)
+    #expect(queue.items[0].trackID == movedTrackID)
+}
+
+@MainActor
+@Test func queueHandleMoveAndSingleItemDeleteKeepCurrentTrackStable() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("queue-handle.sqlite3"))
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
+    )
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(), repository: repository)
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    let ids = [UUID(), UUID(), UUID(), UUID()]
+    await queue.append(trackIDs: ids)
+    let currentItemID = queue.items[0].id
+    let movedItemID = queue.items[3].id
+
+    await queue.move(itemID: movedItemID, toOffset: 1)
+    #expect(queue.items.map(\.trackID) == [ids[0], ids[3], ids[1], ids[2]])
+    #expect(queue.items[queue.currentIndex ?? -1].id == currentItemID)
+
+    await queue.remove(itemID: movedItemID)
+    #expect(queue.items.map(\.trackID) == [ids[0], ids[1], ids[2]])
+    #expect(queue.items[queue.currentIndex ?? -1].id == currentItemID)
+}
+
+@MainActor
+@Test func appendedQueueOverOneHundredDropsOldestItems() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("rolling-queue.sqlite3"))
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
+    )
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(), repository: repository)
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    let ids = (0...QueueStore.maximumItemCount).map { _ in UUID() }
+
+    await queue.append(trackIDs: ids)
+
+    #expect(queue.items.count == QueueStore.maximumItemCount)
+    #expect(queue.items.first?.trackID == ids[1])
+    #expect(queue.items.last?.trackID == ids.last)
+    #expect(queue.currentIndex == 0)
+}
+
+@MainActor
+@Test func individualTrackClickActionsAppendOrInterruptWithoutLosingWaitingQueue() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("click-queue.sqlite3"))
+    let folder = LibraryFolder(displayName: "Fixture", path: root.path)
+    try await repository.addFolder(folder, bookmarkData: Data("fixture".utf8))
+    let tracks = (1...5).map { number in
+        let url = root.appendingPathComponent("\(number).mp3")
+        try? Data().write(to: url)
+        return Track(
+            libraryFolderID: folder.id, relativePath: url.lastPathComponent,
+            url: url, title: "Track \(number)", duration: 60
+        )
+    }
+    try await repository.applySuccessfulScan(folderID: folder.id, tracks: tracks, scannedAt: .now)
+    let localPlayer = FakeLocalAudioPlayer()
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(),
+        controller: FakeController(), localPlayer: localPlayer, pollingInterval: .seconds(60)
+    )
+    playback.selectThisMac()
+    let library = LibraryStore(
+        scanner: NoopScanner(), folderAccess: QueueFolderAccess(root: root), repository: repository,
+        changeMonitor: NoopFolderChangeMonitor(), lifecycleMonitor: NoopSystemEventMonitor(), changeDebounce: .zero
+    )
+    await library.load()
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    var endReasons: [MyMusicPlaybackEndReason] = []
+    queue.onTrackEnded = { endReasons.append($0) }
+
+    await queue.append(trackIDs: Array(tracks[0...2].map(\.id)))
+    await queue.play()
+    #expect(queue.items.map(\.trackID) == tracks[0...2].map(\.id))
+    #expect(queue.currentIndex == 0)
+    #expect(localPlayer.playCount == 1)
+
+    await queue.playImmediately(trackID: tracks[3].id, source: .library)
+    #expect(queue.items.map(\.trackID) == [tracks[0].id, tracks[3].id, tracks[1].id, tracks[2].id])
+    #expect(queue.currentIndex == 1)
+    #expect(localPlayer.playCount == 2)
+    #expect(endReasons == [.directSelection])
+
+    await queue.pause()
+    await queue.playImmediately(trackID: tracks[4].id, source: .library)
+    #expect(queue.items.map(\.trackID) == [tracks[0].id, tracks[3].id, tracks[4].id, tracks[1].id, tracks[2].id])
+    #expect(queue.currentIndex == 2)
+    #expect(localPlayer.playCount == 3)
+    #expect(localPlayer.loadedURL == tracks[4].url)
+    #expect(endReasons == [.directSelection, .directSelection])
+
+    await queue.append(trackIDs: [tracks[0].id])
+    #expect(queue.items.map(\.trackID) == [tracks[0].id, tracks[3].id, tracks[4].id, tracks[1].id, tracks[2].id, tracks[0].id])
+    #expect(queue.currentIndex == 2)
+    #expect(localPlayer.playCount == 3)
+    playback.shutdown(); library.pauseMonitoring()
+}
+
+@MainActor
+@Test func recentHistoryKeepsOnlyLatestEventForEachTrack() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("history-dedup.sqlite3"))
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FakeDescriptions(renderer: sampleRenderer()),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
+    )
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(), repository: repository)
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    let trackID = UUID()
+    let older = PlaybackEvent(trackID: trackID, startedAt: Date(timeIntervalSince1970: 100))
+    let latest = PlaybackEvent(trackID: trackID, startedAt: Date(timeIntervalSince1970: 200), playedSeconds: 20)
+    try await repository.savePlaybackEvent(older)
+    try await repository.savePlaybackEvent(latest)
+    let listening = ListeningStore(repository: repository, library: library, queue: queue)
+    await listening.load()
+
+    #expect(listening.events.count == 2)
+    #expect(listening.recentEvents == [latest])
+}
+
+@MainActor
+@Test func frequentHistoryBuildsCachedCountsFromTrackDictionary() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("frequent-history.sqlite3"))
+    let folder = LibraryFolder(displayName: "Fixture", path: root.path)
+    try await repository.addFolder(folder, bookmarkData: Data("fixture".utf8))
+    let track = Track(
+        libraryFolderID: folder.id, relativePath: "song.mp3",
+        url: root.appendingPathComponent("song.mp3"), title: "Song", duration: 60
+    )
+    try await repository.applySuccessfulScan(folderID: folder.id, tracks: [track], scannedAt: .now)
+    try await repository.savePlaybackEvent(PlaybackEvent(trackID: track.id, playedSeconds: 31))
+    try await repository.savePlaybackEvent(PlaybackEvent(trackID: track.id, playedSeconds: 45))
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
+    )
+    let library = LibraryStore(
+        scanner: NoopScanner(), folderAccess: QueueFolderAccess(root: root), repository: repository,
+        changeMonitor: NoopFolderChangeMonitor(), lifecycleMonitor: NoopSystemEventMonitor(), changeDebounce: .zero
+    )
+    await library.load()
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    let listening = ListeningStore(repository: repository, library: library, queue: queue)
+
+    await listening.load()
+
+    #expect(listening.frequentTracks == [FrequentTrack(trackID: track.id, playCount: 2)])
+    playback.shutdown(); library.pauseMonitoring()
 }
 
 @MainActor
@@ -921,6 +1279,8 @@ import Testing
     await playback.refreshState()
     #expect(queue.nowPlaying.state == .paused)
     await playback.refreshState()
+    #expect(queue.nowPlaying.state == .paused)
+    await playback.refreshState()
     #expect(queue.nowPlaying.state == .unknown)
 
     await controller.setFailsTransport(false)
@@ -1067,6 +1427,55 @@ private final class FakeServer: MediaServerSession, @unchecked Sendable {
     func stop() {}
 }
 
+private final class CountingStereoPreparer: StereoMediaPreparing, @unchecked Sendable {
+    private let lock = NSLock()
+    private let root: URL
+    private var count = 0
+    var preparationCount: Int { lock.withLock { count } }
+
+    init(root: URL) { self.root = root }
+
+    func prepare(fileURL: URL, options: StereoPreparationOptions) async throws -> StereoMediaFiles {
+        let current = lock.withLock { count += 1; return count }
+        try await Task.sleep(for: .milliseconds(20))
+        let directory = root.appendingPathComponent("prepared-\(current)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let left = directory.appendingPathComponent("left.wav")
+        let right = directory.appendingPathComponent("right.wav")
+        try Data("left".utf8).write(to: left)
+        try Data("right".utf8).write(to: right)
+        return StereoMediaFiles(leftURL: left, rightURL: right, sourceSampleRate: 48_000)
+    }
+
+    func prepareSynchronizationCheck(options: StereoPreparationOptions) async throws -> StereoMediaFiles {
+        try await prepare(fileURL: root, options: options)
+    }
+
+    func remove(_ files: StereoMediaFiles) {
+        try? FileManager.default.removeItem(at: files.leftURL.deletingLastPathComponent())
+    }
+}
+
+@MainActor
+private final class FakeLocalAudioPlayer: LocalAudioPlaying {
+    var onPlaybackEnded: (@MainActor () -> Void)?
+    var onPlaybackFailure: (@MainActor (String) -> Void)?
+    var loadedURL: URL?
+    var position: TimeInterval = 0
+    var duration: TimeInterval = 0
+    var playCount = 0
+    var pauseCount = 0
+
+    func load(fileURL: URL) throws { loadedURL = fileURL; position = 0 }
+    func play() { playCount += 1 }
+    func pause() { pauseCount += 1 }
+    func stop() { position = 0 }
+    func seek(to position: TimeInterval) { self.position = position }
+    func currentTime() -> TimeInterval { position }
+    func itemDuration() -> TimeInterval { duration }
+    func finish() { onPlaybackEnded?() }
+}
+
 private struct FakeServerFactory: MediaServerCreating {
     func start(fileURL: URL, rendererAddress: String) throws -> any MediaServerSession { FakeServer() }
 }
@@ -1091,9 +1500,15 @@ private actor FakeController: RendererControlling {
     var trackURI: String?
     var reportedDuration: TimeInterval = 120
     var transportDelay: Duration = .zero
+    var positionDelay: Duration = .zero
     var commandDelay: Duration = .zero
     var concurrentCommands = 0
     var maximumConcurrentCommands = 0
+    var transportReadCount = 0
+    var positionReadCount = 0
+    var volumeReadCount = 0
+    var concurrentReads = 0
+    var maximumConcurrentReads = 0
     func setURI(service: UPnPService, uri: URL, metadata: String) async throws {
         trackURI = uri.absoluteString
         try await command("SetAVTransportURI")
@@ -1106,13 +1521,25 @@ private actor FakeController: RendererControlling {
     func stop(service: UPnPService) async throws { try await command("Stop") }
     func seek(service: UPnPService, position: TimeInterval) async throws { try await command("Seek") }
     func transportInfo(service: UPnPService) async throws -> TransportInfo {
+        transportReadCount += 1
+        concurrentReads += 1
+        maximumConcurrentReads = max(maximumConcurrentReads, concurrentReads)
+        defer { concurrentReads -= 1 }
         let state = transportStateSequence.isEmpty ? transportState : transportStateSequence.removeFirst()
         try await Task.sleep(for: transportDelay)
         if failsTransport { throw NSError(domain: "network", code: -1) }
         return TransportInfo(state: state, status: "OK", speed: "1")
     }
-    func positionInfo(service: UPnPService) async throws -> PositionInfo { PositionInfo(duration: reportedDuration, position: position, trackURI: trackURI) }
+    func positionInfo(service: UPnPService) async throws -> PositionInfo {
+        positionReadCount += 1
+        concurrentReads += 1
+        maximumConcurrentReads = max(maximumConcurrentReads, concurrentReads)
+        defer { concurrentReads -= 1 }
+        try await Task.sleep(for: positionDelay)
+        return PositionInfo(duration: reportedDuration, position: position, trackURI: trackURI)
+    }
     func volume(service: UPnPService) async throws -> UInt8 {
+        volumeReadCount += 1
         if failsVolume { throw NSError(domain: "network", code: -1) }
         return 20
     }
@@ -1132,8 +1559,16 @@ private actor FakeController: RendererControlling {
         trackURI = value.trackURI
     }
     func setTransportDelay(_ value: Duration) { transportDelay = value }
+    func setPositionDelay(_ value: Duration) { positionDelay = value }
     func setCommandDelay(_ value: Duration) { commandDelay = value }
     func clearActions() { actions.removeAll() }
+    func resetReadMetrics() {
+        transportReadCount = 0
+        positionReadCount = 0
+        volumeReadCount = 0
+        concurrentReads = 0
+        maximumConcurrentReads = 0
+    }
 
     private func command(_ action: String) async throws {
         concurrentCommands += 1

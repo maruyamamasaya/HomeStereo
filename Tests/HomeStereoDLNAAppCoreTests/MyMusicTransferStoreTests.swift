@@ -43,6 +43,18 @@ final class MyMusicTransferStoreTests: XCTestCase {
         XCTAssertEqual(eventsPreview.pendingInserts, 1)
         let eventsBeforeApply = try await repository.loadMyMusicPlaybackEvents()
         XCTAssertTrue(eventsBeforeApply.isEmpty)
+
+        let playlists = try MyMusicJSONExportService().exportPlaylists([
+            MyMusicPlaylistRecord(
+                playlistID: UUID(), name: "Fixture", createdAt: fixture.now, updatedAt: fixture.now,
+                tracks: [MyMusicPlaylistTrackRecord(trackID: externalID, title: track.title)]
+            )
+        ])
+        let playlistsPreview = try await service.preview(playlists, as: .playlists)
+        XCTAssertEqual(playlistsPreview.addedPlaylists, 1)
+        XCTAssertEqual(playlistsPreview.importedTracks, 1)
+        let playlistsBeforeApply = try await repository.loadPlaylists()
+        XCTAssertTrue(playlistsBeforeApply.isEmpty)
     }
 
     func testWrongDocumentTypeAndUnsupportedVersionAreRejected() async throws {
@@ -129,6 +141,68 @@ final class MyMusicTransferStoreTests: XCTestCase {
         XCTAssertTrue(try MyMusicJSONCodec.decodePlaybackEvents(emptyData).events.isEmpty)
     }
 
+    func testPlaylistApplyRunsRefreshHookAfterDatabaseCommit() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let track = try await fixture.insertTrack(repository: repository)
+        let externalID = UUID()
+        try await repository.saveMyMusicTrackLinks([fixture.link(track, externalID: externalID)])
+        let recorder = AppliedKindsRecorder()
+        let store = MyMusicTransferStore(
+            repository: repository, files: FakeMyMusicFiles()
+        ) { kind in
+            recorder.kinds.append(kind)
+        }
+        let data = try MyMusicJSONExportService().exportPlaylists([
+            MyMusicPlaylistRecord(
+                playlistID: UUID(), name: "Imported", createdAt: fixture.now, updatedAt: fixture.now,
+                tracks: [MyMusicPlaylistTrackRecord(trackID: externalID, title: track.title)]
+            )
+        ])
+
+        await store.prepareImport(.playlists, data: data)
+        await store.applyImport()
+
+        XCTAssertEqual(recorder.kinds, [.playlists])
+        let playlists = try await repository.loadPlaylists()
+        XCTAssertEqual(playlists.first?.name, "Imported")
+    }
+
+    func testStatusStoreShowsBothTrackIDsSnapshotAndUnlinkedRows() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let linked = try await fixture.insertTrack(repository: repository, name: "linked.mp3", title: "Linked")
+        let unlinked = try await fixture.insertTrack(repository: repository, name: "unlinked.mp3", title: "Unlinked")
+        let externalID = UUID()
+        let library = try MyMusicJSONExportService().exportLibrary([
+            MyMusicTrackRecord(
+                trackID: externalID, title: linked.title, artist: linked.artist ?? "",
+                album: linked.album, duration: linked.duration, playCount: 7,
+                relativePath: linked.relativePath, fileSize: linked.fileSize
+            )
+        ])
+        _ = try await MyMusicPersistenceService(repository: repository).importLibrary(library)
+        let store = MyMusicStatusStore(repository: repository)
+
+        await store.load()
+
+        XCTAssertEqual(store.rows.count, 2)
+        XCTAssertEqual(store.linkedCount, 1)
+        XCTAssertEqual(store.unlinkedCount, 1)
+        let linkedRow = try XCTUnwrap(store.rows.first { $0.id == linked.id })
+        XCTAssertEqual(linkedRow.myMusicTrackID, externalID)
+        XCTAssertEqual(linkedRow.id, linked.id)
+        XCTAssertEqual(linkedRow.myMusicPlayCount, 7)
+        XCTAssertTrue(linkedRow.isLibraryJSONExportable)
+        store.filter = .unlinked
+        XCTAssertEqual(store.visibleRows.map(\.id), [unlinked.id])
+        store.filter = .all
+        store.query = externalID.uuidString
+        XCTAssertEqual(store.visibleRows.map(\.id), [linked.id])
+    }
+
     func testInvalidServiceInputMovesStoreToFailedAndFileNamesAreStable() async throws {
         let fixture = try TransferFixture()
         defer { fixture.cleanup() }
@@ -147,20 +221,78 @@ final class MyMusicTransferStoreTests: XCTestCase {
         XCTAssertEqual(MyMusicDocumentKind.library.fileName, "MyMusic-Library.json")
         XCTAssertEqual(MyMusicDocumentKind.preferences.fileName, "MyMusic-Playback-Preferences.json")
         XCTAssertEqual(MyMusicDocumentKind.playbackEvents.fileName, "MyMusic-Playback-Events.json")
+        XCTAssertEqual(MyMusicDocumentKind.playlists.fileName, "MyMusic-Playlists.json")
     }
+
+    func testDeveloperEditorChangesIndividualFieldsAndWritesValidatedJSON() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let externalID = UUID()
+        let input = try MyMusicJSONExportService().exportPreferences([
+            MyMusicPreferenceRecord(trackID: externalID, playbackPreference: 4, favorite: false)
+        ], exportedAt: fixture.now)
+        let files = FakeMyMusicFiles(inputData: input)
+        let store = MyMusicJSONEditorStore(repository: repository, files: files)
+        store.changeKind(to: .preferences)
+
+        await store.openExistingFile()
+
+        XCTAssertEqual(store.records.count, 1)
+        XCTAssertEqual(store.selectedRecordID, 0)
+        let preference = try XCTUnwrap(store.selectedFields.first { $0.path == "playbackPreference" })
+        let favorite = try XCTUnwrap(store.selectedFields.first { $0.path == "favorite" })
+        store.update(preference, text: "8")
+        store.update(favorite, boolean: true)
+        await store.save()
+
+        let output = try XCTUnwrap(files.writtenData)
+        let decoded = try MyMusicJSONCodec.decodePreferences(output)
+        XCTAssertEqual(decoded.tracks.first?.playbackPreference, 8)
+        XCTAssertEqual(decoded.tracks.first?.favorite, true)
+        XCTAssertEqual(files.requestedFileName, MyMusicJSONCodec.preferencesFileName)
+    }
+
+    func testDeveloperEditorRejectsInvalidNumberBeforeWriting() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let input = try MyMusicJSONExportService().exportPreferences([
+            MyMusicPreferenceRecord(trackID: UUID(), playbackPreference: 4, favorite: false)
+        ], exportedAt: fixture.now)
+        let files = FakeMyMusicFiles(inputData: input)
+        let store = MyMusicJSONEditorStore(repository: repository, files: files)
+        store.changeKind(to: .preferences)
+        await store.openExistingFile()
+        let preference = try XCTUnwrap(store.selectedFields.first { $0.path == "playbackPreference" })
+
+        store.update(preference, text: "not-a-number")
+        await store.save()
+
+        XCTAssertNil(files.writtenData)
+        XCTAssertTrue(store.errorMessage?.contains("有効な数値") == true)
+    }
+}
+
+@MainActor
+private final class AppliedKindsRecorder {
+    var kinds: [MyMusicDocumentKind] = []
 }
 
 @MainActor
 private final class FakeMyMusicFiles: MyMusicFileServicing {
     var requestedFileName: String?
     var writtenData: Data?
+    var inputData: Data?
     let output = URL(fileURLWithPath: "/tmp/MyMusic-Test.json")
 
-    func chooseImportURL() -> URL? { nil }
+    init(inputData: Data? = nil) { self.inputData = inputData }
+
+    func chooseImportURL() -> URL? { inputData == nil ? nil : output }
     func chooseExportURL(defaultFileName: String) -> URL? {
         requestedFileName = defaultFileName; return output
     }
-    func read(from url: URL) throws -> Data { Data() }
+    func read(from url: URL) throws -> Data { inputData ?? Data() }
     func write(_ data: Data, to url: URL) throws { writtenData = data }
 }
 

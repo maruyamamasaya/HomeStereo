@@ -7,9 +7,14 @@ public enum MyMusicLibraryMatcher {
         let linksByExternalID = Dictionary(uniqueKeysWithValues: links.map { ($0.myMusicTrackID, $0) })
         let linksByHomeID = Dictionary(uniqueKeysWithValues: links.map { ($0.homeStereoTrackID, $0) })
         let tracksByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+        let tracksByRelativePath = Dictionary(grouping: tracks, by: { normalizedRelativePath($0.relativePath) })
+        let tracksByFingerprint = Dictionary(grouping: tracks.compactMap { track in
+            track.audioFingerprint.map { ($0, track) }
+        }, by: \.0).mapValues { $0.map(\.1) }
         var claimedHomeIDs = Set(linksByHomeID.keys)
         var items: [MyMusicLibraryMatchItem] = []
         var linksToSave: [MyMusicTrackLink] = []
+        let importedIDs = Set(records.map(\.trackID))
 
         for record in records {
             guard record.duration.isFinite, record.duration >= 0,
@@ -19,35 +24,51 @@ public enum MyMusicLibraryMatcher {
             }
             if let existing = linksByExternalID[record.trackID], let track = tracksByID[existing.homeStereoTrackID] {
                 let refreshed = link(record, track, matchedAt: existing.matchedAt, method: existing.matchMethod, source: existing.source)
-                if refreshed == existing {
-                    items.append(item(record, track.id, .unchanged, existing.matchMethod, nil))
+                linksToSave.append(MyMusicTrackLink(
+                    homeStereoTrackID: refreshed.homeStereoTrackID,
+                    myMusicTrackID: refreshed.myMusicTrackID, relativePath: refreshed.relativePath,
+                    fileSize: refreshed.fileSize, duration: refreshed.duration,
+                    audioFingerprint: refreshed.audioFingerprint,
+                    firstSeenAt: existing.firstSeenAt ?? record.firstSeenAt,
+                    lastSeenAt: matchedAt, isInCurrentSnapshot: true,
+                    matchedAt: existing.matchedAt, matchMethod: existing.matchMethod, source: existing.source
+                ))
+                if refreshed.relativePath == existing.relativePath,
+                   refreshed.fileSize == existing.fileSize,
+                   close(refreshed.duration, existing.duration),
+                   refreshed.audioFingerprint == existing.audioFingerprint {
+                    items.append(item(record, track.id, .unchanged, .trackID, nil))
                 } else {
-                    linksToSave.append(refreshed)
-                    items.append(item(record, track.id, .matched, existing.matchMethod, "保存済みtrackID対応を更新"))
+                    items.append(item(record, track.id, .matched, .trackID, "保存済みtrackID対応を更新"))
                 }
                 continue
             }
 
+            if let relativePath = record.relativePath {
+                let pathCandidates = tracksByRelativePath[normalizedRelativePath(relativePath)] ?? []
+                if !pathCandidates.isEmpty {
+                    let compatible = pathCandidates.filter { track in
+                        (record.fileSize.map { track.fileSize == $0 } ?? true)
+                            && close(track.duration, record.duration)
+                    }
+                    guard !compatible.isEmpty else {
+                        items.append(item(record, nil, .unmatched, .relativePath, "relativePath一致候補とfileSizeまたはdurationが矛盾"))
+                        continue
+                    }
+                    resolve(record, candidates: compatible, method: .relativePath, claimedHomeIDs: &claimedHomeIDs,
+                            matchedAt: matchedAt, items: &items, linksToSave: &linksToSave)
+                    continue
+                }
+            }
+
             let fingerprintCandidates: [Track]
             if let fingerprint = record.audioFingerprint {
-                fingerprintCandidates = tracks.filter { $0.audioFingerprint == fingerprint }
+                fingerprintCandidates = tracksByFingerprint[fingerprint] ?? []
             } else { fingerprintCandidates = [] }
             if !fingerprintCandidates.isEmpty {
                 resolve(record, candidates: fingerprintCandidates, method: .fingerprint, claimedHomeIDs: &claimedHomeIDs,
                         matchedAt: matchedAt, items: &items, linksToSave: &linksToSave)
                 continue
-            }
-
-            if let relativePath = record.relativePath, let fileSize = record.fileSize {
-                let candidates = tracks.filter {
-                    normalized($0.relativePath) == normalized(relativePath)
-                        && $0.fileSize == fileSize && close($0.duration, record.duration)
-                }
-                if !candidates.isEmpty {
-                    resolve(record, candidates: candidates, method: .relativePath, claimedHomeIDs: &claimedHomeIDs,
-                            matchedAt: matchedAt, items: &items, linksToSave: &linksToSave)
-                    continue
-                }
             }
 
             let artist = normalized(record.artist), album = normalized(record.album)
@@ -65,7 +86,8 @@ public enum MyMusicLibraryMatcher {
             }
             items.append(item(record, nil, .unmatched, nil, "一意な照合候補なし"))
         }
-        return (MyMusicLibraryPersistenceResult(items: items), linksToSave)
+        let missing = links.count { !importedIDs.contains($0.myMusicTrackID) }
+        return (MyMusicLibraryPersistenceResult(items: items, missingFromSnapshot: missing), linksToSave)
     }
 
     private static func resolve(
@@ -77,7 +99,7 @@ public enum MyMusicLibraryMatcher {
             items.append(item(record, nil, .ambiguous, method, "候補が\(candidates.count)件")); return
         }
         guard !claimedHomeIDs.contains(track.id) else {
-            items.append(item(record, nil, .ambiguous, method, "候補は別のMyMusic trackIDへ接続済み")); return
+            items.append(item(record, nil, .conflict, method, "候補は別のMyMusic trackIDへ接続済み")); return
         }
         linksToSave.append(link(record, track, matchedAt: matchedAt, method: method, source: .libraryImport))
         claimedHomeIDs.insert(track.id)
@@ -90,8 +112,10 @@ public enum MyMusicLibraryMatcher {
     ) -> MyMusicTrackLink {
         MyMusicTrackLink(
             homeStereoTrackID: track.id, myMusicTrackID: record.trackID,
-            relativePath: track.relativePath, fileSize: track.fileSize, duration: track.duration,
+            relativePath: record.relativePath ?? track.relativePath,
+            fileSize: record.fileSize ?? track.fileSize, duration: record.duration,
             audioFingerprint: record.audioFingerprint ?? track.audioFingerprint,
+            firstSeenAt: record.firstSeenAt, lastSeenAt: matchedAt, isInCurrentSnapshot: true,
             matchedAt: matchedAt, matchMethod: method, source: source
         )
     }
@@ -109,6 +133,9 @@ public enum MyMusicLibraryMatcher {
         (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             .precomposedStringWithCanonicalMapping.lowercased()
     }
+    private static func normalizedRelativePath(_ value: String) -> String {
+        MyMusicJSONCodec.normalizedRelativePath(value) ?? value.precomposedStringWithCanonicalMapping
+    }
     private static func close(_ lhs: Double, _ rhs: Double) -> Bool { abs(lhs - rhs) <= 0.5 }
 }
 
@@ -123,10 +150,13 @@ public struct MyMusicPersistenceService: Sendable {
     public func importLibrary(_ data: Data) async throws -> MyMusicLibraryPersistenceResult {
         let document = try MyMusicJSONImportService().importLibrary(data)
         let context = try await repository.loadMyMusicMatchContext()
+        let importedAt = clock()
         let match = MyMusicLibraryMatcher.match(
-            document.tracks, tracks: context.tracks, links: context.links, matchedAt: clock()
+            document.tracks, tracks: context.tracks, links: context.links, matchedAt: importedAt
         )
-        try await repository.saveMyMusicTrackLinks(match.linksToSave)
+        try await repository.applyMyMusicLibrarySnapshot(
+            match.linksToSave, records: document.tracks, importedAt: importedAt
+        )
         return match.result
     }
 
@@ -163,6 +193,18 @@ public struct MyMusicPersistenceService: Sendable {
         return MyMusicPlaybackEventsExportResult(
             data: try MyMusicJSONExportService().exportPlaybackEvents(records, exportedAt: exportedAt),
             exported: records.count, unresolved: max(0, persisted.count - records.count)
+        )
+    }
+
+    public func importPlaylists(_ data: Data) async throws -> MyMusicPlaylistPersistenceResult {
+        let document = try MyMusicJSONImportService().importPlaylists(data)
+        return try await repository.mergeMyMusicPlaylists(document.playlists)
+    }
+
+    public func exportPlaylists() async throws -> MyMusicPlaylistExportResult {
+        let context = try await repository.loadMyMusicPlaylistContext()
+        return try MyMusicJSONExportService().exportPlaylists(
+            playlists: context.playlists, tracks: context.tracks, links: context.links
         )
     }
 }

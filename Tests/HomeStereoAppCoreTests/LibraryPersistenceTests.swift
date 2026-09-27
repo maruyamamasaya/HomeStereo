@@ -4,6 +4,26 @@ import XCTest
 @testable import HomeStereoAppCore
 
 final class LibraryPersistenceTests: XCTestCase {
+    func testQueuePositionUpdatePreservesQueueItemsAndModes() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let items = [QueueItem(trackID: UUID()), QueueItem(trackID: UUID())]
+        try await repository.saveQueue(QueueSnapshot(
+            items: items, currentIndex: 1, repeatMode: .all,
+            shuffleEnabled: true, position: 2
+        ))
+
+        try await repository.saveQueuePosition(42)
+        let restored = try await repository.loadQueue()
+
+        XCTAssertEqual(restored.items, items)
+        XCTAssertEqual(restored.currentIndex, 1)
+        XCTAssertEqual(restored.repeatMode, .all)
+        XCTAssertTrue(restored.shuffleEnabled)
+        XCTAssertEqual(restored.position, 42)
+    }
+
     func testExtendedTrackMetadataRoundTrip() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

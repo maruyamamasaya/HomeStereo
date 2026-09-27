@@ -4,12 +4,34 @@ import HomeStereoKit
 #endif
 import Observation
 
+private struct StereoMediaCacheKey: Equatable {
+    let path: String
+    let fileSize: UInt64
+    let modificationDate: Date?
+    let options: StereoPreparationOptions
+
+    init(fileURL: URL, options: StereoPreparationOptions) throws {
+        let url = fileURL.standardizedFileURL
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        path = url.path
+        fileSize = UInt64(max(0, values.fileSize ?? 0))
+        modificationDate = values.contentModificationDate
+        self.options = options
+    }
+}
+
+private struct StereoMediaCacheEntry {
+    let key: StereoMediaCacheKey
+    let files: StereoMediaFiles
+}
+
 @MainActor
 @Observable
 public final class RendererPlaybackStore {
     public var destination: DLNASidebarDestination = .devices
     public private(set) var devices: [RendererDevice] = []
     public var selectedDeviceID: String?
+    public private(set) var isThisMacSelected = false
     public private(set) var media: LocalMediaResource?
     public private(set) var selectedLibraryTrackID: UUID?
     public private(set) var playbackState: RendererPlaybackState = .stopped
@@ -46,6 +68,7 @@ public final class RendererPlaybackStore {
     @ObservationIgnored private let serverFactory: any MediaServerCreating
     @ObservationIgnored private let controller: any RendererControlling
     @ObservationIgnored private let secondaryController: any RendererControlling
+    @ObservationIgnored private let localPlayer: any LocalAudioPlaying
     @ObservationIgnored private let stereoPreparer: any StereoMediaPreparing
     @ObservationIgnored private let activityManager: any PlaybackActivityManaging
     @ObservationIgnored private let pollingInterval: Duration
@@ -54,6 +77,9 @@ public final class RendererPlaybackStore {
     @ObservationIgnored private var secondaryActiveServer: (any MediaServerSession)?
     @ObservationIgnored private var retiredServers: [any MediaServerSession] = []
     @ObservationIgnored private var preparedStereoFiles: [StereoMediaFiles] = []
+    @ObservationIgnored private var stereoMediaCache: [StereoMediaCacheEntry] = []
+    @ObservationIgnored private var stereoPreparationTask: Task<StereoMediaFiles, Error>?
+    @ObservationIgnored private var stereoPreparationTaskKey: StereoMediaCacheKey?
     @ObservationIgnored private var activeScopedURL: URL?
     @ObservationIgnored private var pollingTask: Task<Void, Never>?
     @ObservationIgnored private var commandTail: Task<Void, Never>?
@@ -63,10 +89,18 @@ public final class RendererPlaybackStore {
     @ObservationIgnored private var selectedDiscoveryMisses = 0
     @ObservationIgnored private var consecutiveTransportRefreshFailures = 0
     @ObservationIgnored private var diagnosticEvents: [PlaybackDiagnosticEvent] = []
+    @ObservationIgnored private var localPlayerGeneration: UUID?
 
     public var selectedDevice: RendererDevice? { devices.first { $0.id == selectedDeviceID } }
+    public var hasSelectedOutput: Bool { isThisMacSelected || selectedDevice != nil }
+    public var canPlaySelectedOutput: Bool { isThisMacSelected || selectedDevice?.supportsAVTransport == true }
+    public var canSeekSelectedOutput: Bool { isThisMacSelected || selectedDevice?.description?.avTransport != nil }
+    public var canControlSelectedOutputVolume: Bool {
+        !isThisMacSelected && selectedDevice?.description?.renderingControl != nil
+    }
     public var isSonyStereoSelected: Bool { stereoRightDeviceID != nil }
     public var selectedOutputName: String {
+        if isThisMacSelected { return "このMac" }
         if isSonyStereoSelected { return "Sonyステレオ" }
         return selectedDevice?.friendlyName ?? "スピーカーを選択"
     }
@@ -99,6 +133,7 @@ public final class RendererPlaybackStore {
         serverFactory: any MediaServerCreating,
         controller: any RendererControlling,
         secondaryController: (any RendererControlling)? = nil,
+        localPlayer: (any LocalAudioPlaying)? = nil,
         stereoPreparer: any StereoMediaPreparing = AVFoundationStereoMediaPreparer(),
         activityManager: any PlaybackActivityManaging = NoopPlaybackActivityManager(),
         pollingInterval: Duration = .seconds(1),
@@ -110,10 +145,13 @@ public final class RendererPlaybackStore {
         self.serverFactory = serverFactory
         self.controller = controller
         self.secondaryController = secondaryController ?? controller
+        self.localPlayer = localPlayer ?? SystemAudioPlayer()
         self.stereoPreparer = stereoPreparer
         self.activityManager = activityManager
         self.pollingInterval = pollingInterval
         self.commandConfirmationInterval = commandConfirmationInterval
+        self.localPlayer.onPlaybackEnded = { [weak self] in self?.localPlaybackEnded() }
+        self.localPlayer.onPlaybackFailure = { [weak self] message in self?.localPlaybackFailed(message) }
     }
 
     public func discoverRenderers() async {
@@ -199,8 +237,11 @@ public final class RendererPlaybackStore {
     }
 
     public func selectDevice(_ id: String?) {
-        guard id != selectedDeviceID || isSonyStereoSelected else { return }
+        if isThisMacSelected, id == nil { return }
+        guard id != selectedDeviceID || isSonyStereoSelected || isThisMacSelected else { return }
         beginPlaybackGeneration()
+        localPlayer.stop()
+        isThisMacSelected = false
         selectedDeviceID = id
         stereoRightDeviceID = nil
         selectedDiscoveryMisses = 0
@@ -220,6 +261,22 @@ public final class RendererPlaybackStore {
         }
     }
 
+    public func selectThisMac() {
+        guard !isThisMacSelected else { return }
+        beginPlaybackGeneration()
+        stopServing()
+        localPlayer.stop()
+        isThisMacSelected = true
+        selectedDeviceID = nil
+        stereoRightDeviceID = nil
+        selectedDiscoveryMisses = 0
+        consecutiveTransportRefreshFailures = 0
+        setPlaybackState(.stopped)
+        elapsed = 0
+        lastError = nil
+        onPresentationChange?()
+    }
+
     public func selectSonyStereo() {
         guard let pair = sonyStereoPair else {
             lastError = PlaybackDiagnostic(action: "Sonyステレオ", details: "SRS-HG1とSRS-HG10の両方を検出してから選択してください。")
@@ -227,6 +284,8 @@ public final class RendererPlaybackStore {
         }
         beginPlaybackGeneration()
         stopServing()
+        localPlayer.stop()
+        isThisMacSelected = false
         selectedDeviceID = pair.left.id
         stereoRightDeviceID = pair.right.id
         selectedDiscoveryMisses = 0
@@ -241,6 +300,7 @@ public final class RendererPlaybackStore {
             await self?.refreshState()
             self?.startPolling()
         }
+        scheduleStereoPreparation()
     }
 
     public func clearSonyStereo() {
@@ -248,6 +308,7 @@ public final class RendererPlaybackStore {
         beginPlaybackGeneration()
         stopServing()
         stereoRightDeviceID = nil
+        cancelStereoPreparation()
         selectedDiscoveryMisses = 0
         setPlaybackState(.stopped)
         elapsed = 0
@@ -302,6 +363,7 @@ public final class RendererPlaybackStore {
             let resource = try LocalMediaResource(fileURL: url)
             beginPlaybackGeneration()
             retireActiveServer()
+            localPlayer.stop()
             stopSecurityScope()
             activeScopedURL = fileSelection.beginAccessing(url) ? url : nil
             media = resource
@@ -311,6 +373,7 @@ public final class RendererPlaybackStore {
             duration = 0
             lastError = nil
             onPresentationChange?()
+            scheduleStereoPreparation()
         } catch { record(error, action: "ファイル選択") }
     }
 
@@ -320,6 +383,7 @@ public final class RendererPlaybackStore {
             let resource = try LocalMediaResource(fileURL: url)
             beginPlaybackGeneration()
             retireActiveServer()
+            localPlayer.stop()
             stopSecurityScope()
             media = resource
             selectedLibraryTrackID = trackID
@@ -328,6 +392,7 @@ public final class RendererPlaybackStore {
             duration = expectedDuration ?? 0
             lastError = nil
             onPresentationChange?()
+            scheduleStereoPreparation()
             return true
         } catch {
             record(error, action: "Libraryから再生")
@@ -337,20 +402,45 @@ public final class RendererPlaybackStore {
 
     public func togglePlayback() async { playbackState == .playing ? await pause() : await play() }
 
+    public func prewarmStereoMedia(fileURL: URL) async {
+        guard isSonyStereoSelected else { return }
+        do { _ = try await preparedStereoMedia(fileURL: fileURL, options: stereoPreparationOptions) }
+        catch is CancellationError { }
+        catch { /* Playback surfaces the same preparation error if this track is selected. */ }
+    }
+
     public func play() async {
         await serializeCommand { [weak self] in
-            guard let self, let context = self.playbackContext() else { return }
+            guard let self else { return }
+            if self.isThisMacSelected {
+                guard let media = self.media else {
+                    self.lastError = PlaybackDiagnostic(action: "Play", details: "音源ファイルを選択してください。")
+                    return
+                }
+                await self.perform(action: "このMacで再生") {
+                    if self.localPlayerGeneration != self.playbackGeneration {
+                        try self.localPlayer.load(fileURL: media.fileURL)
+                        self.localPlayerGeneration = self.playbackGeneration
+                        let localDuration = self.localPlayer.itemDuration()
+                        if localDuration > 0 { self.duration = localDuration }
+                    }
+                    self.localPlayer.play()
+                    self.setPlaybackState(.playing)
+                    self.startPolling()
+                }
+                return
+            }
+            guard let context = self.playbackContext() else { return }
             await self.perform(action: "Play") {
                 if let pair = self.activeStereoPair() {
                     if self.isStereoSynchronizationCheckActive { self.stopServing() }
                     if self.activeServer == nil || self.secondaryActiveServer == nil {
                         let options = self.stereoPreparationOptions
-                        let files = try await self.stereoPreparer.prepare(
+                        let files = try await self.preparedStereoMedia(
                             fileURL: context.media.fileURL, options: options
                         )
                         self.lastStereoSourceSampleRate = files.sourceSampleRate
                         self.lastStereoAppliedDelayMilliseconds = files.appliedDelayMilliseconds
-                        self.preparedStereoFiles.append(files)
                         let serverFactory = self.serverFactory
                         let leftAddress = pair.left.discovery.sourceAddress
                         let rightAddress = pair.right.discovery.sourceAddress
@@ -507,9 +597,71 @@ public final class RendererPlaybackStore {
         }
     }
 
+    /// Tears down both stereo media sessions and assigns fresh HTTP URLs to the
+    /// renderers. Stereo calibration and the selected track are intentionally
+    /// retained. If playback was active, the track restarts from the beginning.
+    public func resetStereoConnection() async {
+        var shouldRestartPlayback = false
+        await serializeCommand { [weak self] in
+            guard let self else { return }
+            guard !self.isStereoSynchronizationCheckActive else {
+                self.lastError = PlaybackDiagnostic(
+                    action: "ステレオ通信リセット",
+                    details: "遅延チェックが終わってから通信をリセットしてください。"
+                )
+                return
+            }
+            guard let leftTransport = self.selectedDevice?.description?.avTransport,
+                  let pair = self.activeStereoPair() else {
+                self.lastError = PlaybackDiagnostic(
+                    action: "ステレオ通信リセット",
+                    details: "Sonyステレオを選択してから実行してください。"
+                )
+                return
+            }
+
+            shouldRestartPlayback = self.playbackState == .playing && self.media != nil
+            self.isBusy = true
+            self.beginPlaybackGeneration()
+
+            do {
+                async let leftStop: Void = self.controller.stop(service: leftTransport)
+                async let rightStop: Void = self.secondaryController.stop(service: pair.rightTransport)
+                _ = try await (leftStop, rightStop)
+                self.appendDiagnostic(action: "ステレオ通信リセット", outcome: "renderer-stop-success")
+            } catch {
+                // This action is itself the recovery path. Even if a renderer no
+                // longer answers Stop, discard both local sessions and reconnect.
+                self.appendDiagnostic(action: "ステレオ通信リセット", outcome: "renderer-stop-failed")
+            }
+
+            self.stopServing()
+            self.setPlaybackState(.stopped)
+            self.elapsed = 0
+            self.lastConfirmedPosition = 0
+            self.lastError = nil
+            self.isBusy = false
+            self.onPositionChange?(0)
+            self.onPresentationChange?()
+            self.appendDiagnostic(action: "ステレオ通信リセット", outcome: "local-sessions-cleared")
+        }
+
+        if shouldRestartPlayback {
+            await play()
+        }
+    }
+
     public func pause() async {
         await serializeCommand { [weak self] in
-            guard let self, let transport = self.selectedDevice?.description?.avTransport else { return }
+            guard let self else { return }
+            if self.isThisMacSelected {
+                self.localPlayer.pause()
+                self.setPlaybackState(.paused)
+                self.elapsed = self.localPlayer.currentTime()
+                self.onPositionChange?(self.elapsed)
+                return
+            }
+            guard let transport = self.selectedDevice?.description?.avTransport else { return }
             if self.isSonyStereoSelected {
                 await self.stopStereo(action: "Pause→Stop")
                 return
@@ -574,7 +726,16 @@ public final class RendererPlaybackStore {
 
     public func stop() async {
         await serializeCommand { [weak self] in
-            guard let self, let transport = self.selectedDevice?.description?.avTransport else { return }
+            guard let self else { return }
+            if self.isThisMacSelected {
+                self.localPlayer.stop()
+                self.setPlaybackState(.stopped)
+                self.elapsed = 0
+                self.lastConfirmedPosition = 0
+                self.onPositionChange?(0)
+                return
+            }
+            guard let transport = self.selectedDevice?.description?.avTransport else { return }
             if self.isSonyStereoSelected {
                 await self.stopStereo(action: "Stop")
                 return
@@ -615,7 +776,15 @@ public final class RendererPlaybackStore {
 
     public func seek(to position: TimeInterval) async {
         await serializeCommand { [weak self] in
-            guard let self, let transport = self.selectedDevice?.description?.avTransport else { return }
+            guard let self else { return }
+            if self.isThisMacSelected {
+                self.localPlayer.seek(to: position)
+                self.elapsed = max(0, position)
+                self.lastConfirmedPosition = self.elapsed
+                self.onPositionChange?(self.elapsed)
+                return
+            }
+            guard let transport = self.selectedDevice?.description?.avTransport else { return }
             await self.perform(action: "Seek") {
                 if let pair = self.activeStereoPair() {
                     async let left: Void = self.controller.seek(service: transport, position: position)
@@ -679,6 +848,15 @@ public final class RendererPlaybackStore {
 
     public func refreshState() async {
         guard !isBusy else { return }
+        if isThisMacSelected {
+            guard localPlayerGeneration == playbackGeneration else { return }
+            elapsed = localPlayer.currentTime()
+            let localDuration = localPlayer.itemDuration()
+            if localDuration > 0 { duration = localDuration }
+            lastConfirmedPosition = elapsed
+            onPositionChange?(elapsed)
+            return
+        }
         guard let description = selectedDevice?.description else { return }
         refreshSequence &+= 1
         let sequence = refreshSequence
@@ -688,11 +866,11 @@ public final class RendererPlaybackStore {
         if let transport = description.avTransport {
             do {
                 let previousState = playbackState
-                let info = try await controller.transportInfo(service: transport)
+                async let infoRequest = controller.transportInfo(service: transport)
+                async let positionRequest = controller.positionInfo(service: transport)
+                let (info, position) = try await (infoRequest, positionRequest)
                 guard generation == playbackGeneration, sequence == refreshSequence else { return }
                 let reportedState = RendererPlaybackState(rawValue: info.state) ?? .unknown
-                let position = try await controller.positionInfo(service: transport)
-                guard generation == playbackGeneration, sequence == refreshSequence else { return }
                 consecutiveTransportRefreshFailures = 0
                 if rendererURIChanged(position.trackURI) {
                     playbackGeneration = UUID()
@@ -730,9 +908,9 @@ public final class RendererPlaybackStore {
                 guard observedGeneration == playbackGeneration, sequence == refreshSequence else { return }
                 transportFailed = true
                 consecutiveTransportRefreshFailures += 1
-                if consecutiveTransportRefreshFailures >= 2 {
+                if consecutiveTransportRefreshFailures >= 3 {
                     setPlaybackState(.unknown)
-                    if consecutiveTransportRefreshFailures == 2 {
+                    if consecutiveTransportRefreshFailures == 3 {
                         record(error, action: "GetTransportInfo / GetPositionInfo")
                     }
                 } else {
@@ -743,7 +921,8 @@ public final class RendererPlaybackStore {
                 }
             }
         }
-        if let rendering = description.renderingControl {
+        let shouldRefreshVolume = sequence == 1 || sequence.isMultiple(of: 5)
+        if shouldRefreshVolume, let rendering = description.renderingControl {
             do {
                 if let pair = activeStereoPair(), let rightRendering = pair.right.description?.renderingControl {
                     async let left = controller.volume(service: rendering)
@@ -793,12 +972,21 @@ public final class RendererPlaybackStore {
         onShutdown?()
         pollingTask?.cancel()
         commandTail?.cancel()
+        localPlayer.stop()
         stopServing()
         stopSecurityScope()
         activityManager.setPlaybackActive(false)
     }
 
     public func prepareForSystemInterruption() {
+        if isThisMacSelected {
+            pollingTask?.cancel()
+            localPlayer.pause()
+            elapsed = localPlayer.currentTime()
+            onPositionChange?(elapsed)
+            setPlaybackState(.paused)
+            return
+        }
         beginPlaybackGeneration()
         pollingTask?.cancel()
         stopServing()
@@ -963,6 +1151,78 @@ public final class RendererPlaybackStore {
         lastConfirmedPosition = 0
         lastError = nil
         onPresentationChange?()
+        scheduleStereoPreparation()
+    }
+
+    private func scheduleStereoPreparation() {
+        guard isSonyStereoSelected, let media else { return }
+        let options = stereoPreparationOptions
+        Task(priority: .utility) { [weak self] in
+            do { _ = try await self?.preparedStereoMedia(fileURL: media.fileURL, options: options) }
+            catch is CancellationError { }
+            catch { /* Play reports preparation failures when the user starts playback. */ }
+        }
+    }
+
+    private func preparedStereoMedia(
+        fileURL: URL, options: StereoPreparationOptions
+    ) async throws -> StereoMediaFiles {
+        let key = try StereoMediaCacheKey(fileURL: fileURL, options: options)
+        if let cached = stereoMediaCache.last(where: { $0.key == key }),
+           FileManager.default.fileExists(atPath: cached.files.leftURL.path),
+           FileManager.default.fileExists(atPath: cached.files.rightURL.path) {
+            return cached.files
+        }
+        if stereoPreparationTaskKey == key, let stereoPreparationTask {
+            return try await stereoPreparationTask.value
+        }
+
+        cancelStereoPreparation()
+        let preparer = stereoPreparer
+        let task = Task(priority: .utility) {
+            try Task.checkCancellation()
+            return try await preparer.prepare(fileURL: fileURL, options: options)
+        }
+        stereoPreparationTask = task
+        stereoPreparationTaskKey = key
+        do {
+            let files = try await task.value
+            guard stereoPreparationTaskKey == key else {
+                preparer.remove(files)
+                throw CancellationError()
+            }
+            stereoPreparationTask = nil
+            stereoPreparationTaskKey = nil
+            preparedStereoFiles.append(files)
+            stereoMediaCache.removeAll { $0.key == key }
+            stereoMediaCache.append(StereoMediaCacheEntry(key: key, files: files))
+            evictStereoMediaCacheIfNeeded()
+            return files
+        } catch {
+            if stereoPreparationTaskKey == key {
+                stereoPreparationTask = nil
+                stereoPreparationTaskKey = nil
+            }
+            throw error
+        }
+    }
+
+    private func evictStereoMediaCacheIfNeeded() {
+        while stereoMediaCache.count > 2 {
+            let evicted = stereoMediaCache.removeFirst().files
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(35))
+                guard let self, !self.stereoMediaCache.contains(where: { $0.files == evicted }) else { return }
+                self.stereoPreparer.remove(evicted)
+                self.preparedStereoFiles.removeAll { $0 == evicted }
+            }
+        }
+    }
+
+    private func cancelStereoPreparation() {
+        stereoPreparationTask?.cancel()
+        stereoPreparationTask = nil
+        stereoPreparationTaskKey = nil
     }
 
     private func perform(action: String, operation: () async throws -> Void) async {
@@ -1001,11 +1261,34 @@ public final class RendererPlaybackStore {
 
     private func beginPlaybackGeneration() {
         playbackGeneration = UUID()
+        localPlayerGeneration = nil
         refreshSequence &+= 1
         completedGeneration = nil
         lastConfirmedPosition = 0
         consecutiveTransportRefreshFailures = 0
         pollingTask?.cancel()
+    }
+
+    private func localPlaybackEnded() {
+        guard isThisMacSelected,
+              localPlayerGeneration == playbackGeneration,
+              completedGeneration != playbackGeneration else { return }
+        completedGeneration = playbackGeneration
+        pollingTask?.cancel()
+        elapsed = duration
+        lastConfirmedPosition = elapsed
+        setPlaybackState(.stopped)
+        onPositionChange?(elapsed)
+        onTrackFinished?()
+    }
+
+    private func localPlaybackFailed(_ message: String) {
+        guard isThisMacSelected, localPlayerGeneration == playbackGeneration else { return }
+        pollingTask?.cancel()
+        setPlaybackState(.stopped)
+        lastError = PlaybackDiagnostic(action: "このMacで再生", details: message)
+        appendDiagnostic(action: "このMacで再生", outcome: "failure")
+        onPresentationChange?()
     }
 
     private func rendererBecameUnavailable() {
@@ -1062,6 +1345,7 @@ public final class RendererPlaybackStore {
     }
 
     private func stopServing() {
+        cancelStereoPreparation()
         activeServer?.stop()
         activeServer = nil
         secondaryActiveServer?.stop()
@@ -1070,6 +1354,7 @@ public final class RendererPlaybackStore {
         retiredServers.removeAll()
         preparedStereoFiles.forEach { stereoPreparer.remove($0) }
         preparedStereoFiles.removeAll()
+        stereoMediaCache.removeAll()
         isStereoSynchronizationCheckActive = false
     }
     private func setPlaybackState(_ state: RendererPlaybackState) {

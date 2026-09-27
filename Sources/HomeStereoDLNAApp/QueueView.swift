@@ -10,8 +10,8 @@ struct QueueView: View {
     @Bindable var playback: RendererPlaybackStore
     @Bindable var queue: QueueStore
     @Bindable var library: LibraryStore
-    @State private var confirmsClear = false
-
+    @State private var showsPlayedItems = false
+    @State private var dropTargetID: QueueItem.ID?
     var body: some View {
         Group {
             if queue.items.isEmpty {
@@ -27,8 +27,6 @@ struct QueueView: View {
                     queueSummary
                     Divider()
                     queueList
-                    Divider()
-                    selectionBar
                 }
             }
         }
@@ -50,17 +48,6 @@ struct QueueView: View {
                 .overlay(alignment: .bottom) { Divider() }
             }
         }
-        .toolbar {
-            Menu("再生キューを管理", systemImage: "ellipsis.circle") {
-                Button("すべて消去", systemImage: "trash", role: .destructive) { confirmsClear = true }
-                    .disabled(queue.items.isEmpty)
-            }
-        }
-        .confirmationDialog("再生キューの全項目を削除しますか？", isPresented: $confirmsClear) {
-            Button("すべて削除", role: .destructive) { Task { await queue.clear() } }
-        } message: {
-            Text("音源ファイルは削除されません。現在の再生も停止しません。")
-        }
     }
 
     private var queueSummary: some View {
@@ -71,30 +58,60 @@ struct QueueView: View {
                 .frame(width: 42, height: 42)
                 .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 3) {
-                Text("再生キュー").font(.headline)
+                Text("再生キュー（最大\(QueueStore.maximumItemCount)曲）").font(.headline)
                 Text(queueSummaryText).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Text("ドラッグして曲順を変更")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if playedItemCount > 0 {
+                Button(showsPlayedItems ? "再生済みを隠す" : "再生済みを表示（\(playedItemCount)）",
+                       systemImage: showsPlayedItems ? "eye.slash" : "eye") {
+                    showsPlayedItems.toggle()
+                    if !showsPlayedItems {
+                        queue.selectedItemIDs.formIntersection(Set(visibleQueueEntries.map(\.item.id)))
+                    }
+                }
+                .buttonStyle(.borderless)
+            }
         }
         .padding(14)
     }
 
     private var queueList: some View {
         List(selection: $queue.selectedItemIDs) {
-            ForEach(Array(queue.items.enumerated()), id: \.element.id) { index, item in
+            ForEach(visibleQueueEntries, id: \.item.id) { entry in
+                let index = entry.index
+                let item = entry.item
                 queueRow(item, index: index)
                     .tag(item.id)
+                    .dropDestination(for: String.self) { values, location in
+                        handleDrop(values, on: item, at: index, location: location)
+                    } isTargeted: { isTargeted in
+                        if isTargeted {
+                            dropTargetID = item.id
+                        } else if dropTargetID == item.id {
+                            dropTargetID = nil
+                        }
+                    }
                     .contextMenu {
                         Button("今すぐ再生") { Task { await queue.playItem(id: item.id) } }
-                            .disabled(playback.selectedDevice?.supportsAVTransport != true)
+                            .disabled(!playback.canPlaySelectedOutput)
                         if index != queue.currentIndex {
                             Button("次に再生", systemImage: "text.insert") {
                                 Task { await queue.moveNext(itemIDs: [item.id]) }
                             }
                         }
+                        Button("1つ上へ", systemImage: "arrow.up") {
+                            Task { await queue.moveItem(id: item.id, by: -1) }
+                        }
+                        .disabled(
+                            index == queue.currentIndex ||
+                            index == 0 ||
+                            (!showsPlayedItems && index == (queue.currentIndex ?? -2) + 1)
+                        )
+                        Button("1つ下へ", systemImage: "arrow.down") {
+                            Task { await queue.moveItem(id: item.id, by: 1) }
+                        }
+                        .disabled(index == queue.currentIndex || index == queue.items.count - 1)
                         Divider()
                         Button("再生キューから削除", role: .destructive) {
                             queue.selectedItemIDs = [item.id]
@@ -102,8 +119,7 @@ struct QueueView: View {
                         }
                     }
             }
-            .onMove { source, destination in Task { await queue.move(fromOffsets: source, toOffset: destination) } }
-            .onDelete { offsets in Task { await queue.remove(atOffsets: offsets) } }
+            .onDelete { offsets in removeVisibleItems(at: offsets) }
         }
         .onDeleteCommand { Task { await queue.removeSelected() } }
         .dropDestination(for: String.self) { values, _ in
@@ -117,82 +133,126 @@ struct QueueView: View {
 
     private func queueRow(_ item: QueueItem, index: Int) -> some View {
         HStack(spacing: 12) {
-            queuePosition(index)
-            if let track = queue.track(for: item) {
-                CachedArtwork(track: track, library: library, size: 42)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(track.title).lineLimit(1)
-                    Text([track.artist, track.album].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            HStack(spacing: 12) {
+                if let track = queue.track(for: item) {
+                    CachedArtwork(track: track, library: library, size: 42)
+                        .overlay(alignment: .bottomLeading) {
+                            if index == queue.currentIndex { currentPlaybackIndicator }
+                        }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(track.title).lineLimit(1)
+                        Text([track.artist, track.album].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    if track.scanState == .missing {
+                        Label("ファイルが見つかりません", systemImage: "exclamationmark.triangle")
+                            .labelStyle(.iconOnly).foregroundStyle(.orange)
+                    }
+                } else {
+                    Image(systemName: "questionmark.square.dashed")
+                        .font(.title2).foregroundStyle(.orange)
+                        .frame(width: 42, height: 42)
+                        .overlay(alignment: .bottomLeading) {
+                            if index == queue.currentIndex { currentPlaybackIndicator }
+                        }
+                    Text("ライブラリにない曲").foregroundStyle(.orange)
+                    Spacer()
                 }
-                Spacer()
-                if track.scanState == .missing {
-                    Label("ファイルが見つかりません", systemImage: "exclamationmark.triangle")
-                        .labelStyle(.iconOnly).foregroundStyle(.orange)
-                }
-                Text(formatQueueDuration(track.duration)).monospacedDigit().foregroundStyle(.secondary)
-            } else {
-                Image(systemName: "questionmark.square.dashed")
-                    .font(.title2).foregroundStyle(.orange)
-                    .frame(width: 42, height: 42)
-                Text("ライブラリにない曲").foregroundStyle(.orange)
-                Spacer()
             }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { Task { await queue.playItem(id: item.id) } }
+
+            Button(role: .destructive) {
+                Task { await queue.remove(itemID: item.id) }
+            } label: {
+                Image(systemName: "minus.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.red)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .help("再生キューから削除")
+            .accessibilityLabel("\(queue.track(for: item)?.title ?? "この曲")を再生キューから削除")
+
+            reorderHandle(item, index: index)
         }
         .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { Task { await queue.playItem(id: item.id) } }
-        .listRowBackground(index == queue.currentIndex ? Color.accentColor.opacity(0.09) : Color.clear)
+        .frame(minHeight: 50)
+        .listRowBackground(queueRowBackground(item, index: index))
     }
 
-    private func queuePosition(_ index: Int) -> some View {
-        VStack(spacing: 2) {
-            Image(systemName: queuePositionIcon(index))
-                .font(.callout)
-                .foregroundStyle(index == queue.currentIndex ? Color.accentColor : Color.secondary)
-            Text(queuePositionLabel(index))
-                .font(.caption2)
-                .foregroundStyle(index == queue.currentIndex ? Color.accentColor : Color.secondary)
+    private var currentPlaybackIndicator: some View {
+        Image(systemName: "speaker.wave.2.fill")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(4)
+            .background(Color.accentColor, in: Circle())
+            .offset(x: -3, y: 3)
+            .accessibilityLabel("再生中")
+    }
+
+    @ViewBuilder
+    private func reorderHandle(_ item: QueueItem, index: Int) -> some View {
+        let handle = Image(systemName: "line.3.horizontal")
+            .font(.body.weight(.semibold))
+            .foregroundStyle(index == queue.currentIndex ? Color.secondary.opacity(0.35) : Color.secondary)
+            .frame(width: 30, height: 30)
+            .contentShape(Rectangle())
+            .accessibilityLabel(index == queue.currentIndex ? "再生中の曲は移動できません" : "ドラッグして曲順を変更")
+
+        if index == queue.currentIndex {
+            handle.help("再生中の曲は移動できません")
+        } else {
+            handle
+                .draggable(QueueItemDragPayload.encode(item.id))
+                .help("ドラッグして曲順を変更")
         }
-        .frame(width: 56)
-        .accessibilityElement(children: .combine)
     }
 
-    private var selectionBar: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                selectionSummary
-                Spacer()
-                selectionActions
+    private var playedItemCount: Int {
+        min(queue.currentIndex ?? 0, queue.items.count)
+    }
+
+    private var visibleQueueEntries: [(index: Int, item: QueueItem)] {
+        Array(queue.items.enumerated()).compactMap { index, item in
+            if !showsPlayedItems, index < playedItemCount { return nil }
+            return (index, item)
+        }
+    }
+
+    private func removeVisibleItems(at offsets: IndexSet) {
+        let entries = visibleQueueEntries
+        let absoluteOffsets = IndexSet(offsets.compactMap { entries.indices.contains($0) ? entries[$0].index : nil })
+        Task { await queue.remove(atOffsets: absoluteOffsets) }
+    }
+
+    private func handleDrop(
+        _ values: [String],
+        on targetItem: QueueItem,
+        at targetIndex: Int,
+        location: CGPoint
+    ) -> Bool {
+        if let movingID = values.compactMap(QueueItemDragPayload.decode).first {
+            guard movingID != targetItem.id else { return true }
+            var destination = targetIndex + (location.y >= 25 ? 1 : 0)
+            if !showsPlayedItems, let currentIndex = queue.currentIndex {
+                destination = max(destination, currentIndex + 1)
             }
-            VStack(alignment: .leading, spacing: 9) {
-                selectionSummary
-                selectionActions
-            }
+            Task { await queue.move(itemID: movingID, toOffset: destination) }
+            return true
         }
-        .padding(12)
-        .background(.bar)
+
+        let trackIDs = values.flatMap(TrackDragPayload.decode)
+        guard !trackIDs.isEmpty else { return false }
+        Task { await queue.append(trackIDs: trackIDs) }
+        return true
     }
 
-    private var selectionSummary: some View {
-        Text(queue.selectedItemIDs.isEmpty ? "曲を選択して順番を編集" : "\(queue.selectedItemIDs.count)曲を選択中")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-    }
-
-    private var selectionActions: some View {
-        HStack(spacing: 10) {
-            Button("次に再生", systemImage: "text.insert") { Task { await queue.moveSelectedNext() } }
-                .disabled(movableSelectionCount == 0)
-            Button("削除", systemImage: "trash", role: .destructive) { Task { await queue.removeSelected() } }
-                .disabled(queue.selectedItemIDs.isEmpty)
-        }
-    }
-
-    private var movableSelectionCount: Int {
-        queue.items.enumerated().reduce(0) { result, value in
-            result + (queue.selectedItemIDs.contains(value.element.id) && value.offset != queue.currentIndex ? 1 : 0)
-        }
+    private func queueRowBackground(_ item: QueueItem, index: Int) -> Color {
+        if dropTargetID == item.id { return Color.accentColor.opacity(0.16) }
+        if index == queue.currentIndex { return Color.accentColor.opacity(0.09) }
+        return .clear
     }
 
     private var queueSummaryText: String {
@@ -201,20 +261,16 @@ struct QueueView: View {
         return "\(queue.items.count)曲 · あと\(remaining)曲"
     }
 
-    private func queuePositionIcon(_ index: Int) -> String {
-        guard let current = queue.currentIndex else { return index == 0 ? "text.insert" : "line.3.horizontal" }
-        if index < current { return "checkmark" }
-        if index == current { return "speaker.wave.2.fill" }
-        if index == current + 1 { return "text.insert" }
-        return "line.3.horizontal"
-    }
+}
 
-    private func queuePositionLabel(_ index: Int) -> String {
-        guard let current = queue.currentIndex else { return index == 0 ? "次" : "その後" }
-        if index < current { return "再生済み" }
-        if index == current { return "再生中" }
-        if index == current + 1 { return "次" }
-        return "その後"
+private enum QueueItemDragPayload {
+    private static let prefix = "home-stereo-queue-item:"
+
+    static func encode(_ id: QueueItem.ID) -> String { prefix + id.uuidString }
+
+    static func decode(_ value: String) -> QueueItem.ID? {
+        guard value.hasPrefix(prefix) else { return nil }
+        return UUID(uuidString: String(value.dropFirst(prefix.count)))
     }
 }
 
@@ -266,9 +322,4 @@ struct QueueModeControls: View {
         case .one: "1曲"
         }
     }
-}
-
-private func formatQueueDuration(_ seconds: TimeInterval) -> String {
-    guard seconds.isFinite, seconds > 0 else { return "—" }
-    let total = Int(seconds.rounded()); return String(format: "%d:%02d", total / 60, total % 60)
 }

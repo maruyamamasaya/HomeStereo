@@ -65,6 +65,9 @@ final class MyMusicPlaybackSessionTests: XCTestCase {
         XCTAssertFalse(MyMusicPlaybackPolicy.countsAsPlay(listenedSeconds: 29.9, trackDuration: 100))
         XCTAssertTrue(MyMusicPlaybackPolicy.countsAsPlay(listenedSeconds: 10, trackDuration: 20))
         XCTAssertFalse(MyMusicPlaybackPolicy.countsAsPlay(listenedSeconds: 9.9, trackDuration: 20))
+        XCTAssertFalse(MyMusicPlaybackPolicy.isCompleted(listenedSeconds: 100, trackDuration: .nan))
+        XCTAssertTrue(MyMusicPlaybackPolicy.isEarlySkip(skipped: true, listenedSeconds: 30))
+        XCTAssertFalse(MyMusicPlaybackPolicy.isEarlySkip(skipped: true, listenedSeconds: 30.1))
     }
 
     private func makeSession(

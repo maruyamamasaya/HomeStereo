@@ -6,6 +6,65 @@ import Network
 #if canImport(HomeStereoKit)
 import HomeStereoKit
 #endif
+
+@MainActor
+public final class SystemAudioPlayer: LocalAudioPlaying {
+    public var onPlaybackEnded: (@MainActor () -> Void)?
+    public var onPlaybackFailure: (@MainActor (String) -> Void)?
+
+    private let player = AVPlayer()
+    nonisolated(unsafe) private var endedObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var failedObserver: NSObjectProtocol?
+
+    public init() {}
+
+    deinit {
+        if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
+        if let failedObserver { NotificationCenter.default.removeObserver(failedObserver) }
+    }
+
+    public func load(fileURL: URL) throws {
+        guard FileManager.default.isReadableFile(atPath: fileURL.path) else {
+            throw LocalAudioPlayerError.unreadableFile
+        }
+        if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
+        if let failedObserver { NotificationCenter.default.removeObserver(failedObserver) }
+        let item = AVPlayerItem(url: fileURL)
+        endedObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.onPlaybackEnded?() }
+        }
+        failedObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.onPlaybackFailure?("システム出力で再生を完了できませんでした。")
+            }
+        }
+        player.replaceCurrentItem(with: item)
+    }
+
+    public func play() { player.play() }
+    public func pause() { player.pause() }
+    public func stop() { player.pause(); seek(to: 0) }
+    public func seek(to position: TimeInterval) {
+        player.seek(to: CMTime(seconds: max(0, position), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+    public func currentTime() -> TimeInterval {
+        let seconds = player.currentTime().seconds
+        return seconds.isFinite ? max(0, seconds) : 0
+    }
+    public func itemDuration() -> TimeInterval {
+        let seconds = player.currentItem?.duration.seconds ?? 0
+        return seconds.isFinite ? max(0, seconds) : 0
+    }
+}
+
+private enum LocalAudioPlayerError: LocalizedError {
+    case unreadableFile
+    var errorDescription: String? { "選択した音源ファイルを読み込めません。" }
+}
 import UniformTypeIdentifiers
 
 public struct RendererDiscoveryService: RendererDiscovering {

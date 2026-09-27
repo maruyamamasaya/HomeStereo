@@ -7,9 +7,11 @@ import Observation
 @MainActor
 @Observable
 public final class QueueStore {
+    public static let maximumItemCount = 100
     public private(set) var snapshot = QueueSnapshot()
     public private(set) var errorMessage: String?
     public private(set) var isTransitioning = false
+    public private(set) var nowPlaying = NowPlayingPresentation()
     public var selectedItemIDs = Set<QueueItem.ID>()
     @ObservationIgnored public var onTrackStarted: (@MainActor (
         Track.ID, TimeInterval, MyMusicPlaySource, MyMusicSelectionType
@@ -23,6 +25,7 @@ public final class QueueStore {
     @ObservationIgnored private let library: LibraryStore
     @ObservationIgnored private let playback: RendererPlaybackStore
     @ObservationIgnored private var positionSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var stereoPrewarmTask: Task<Void, Never>?
     @ObservationIgnored private var currentWasRemoved = false
     @ObservationIgnored private var currentPlaySource: MyMusicPlaySource = .unknown
     @ObservationIgnored private var nextSelectionType: MyMusicSelectionType = .manual
@@ -39,10 +42,10 @@ public final class QueueStore {
     public var nowPlayingTrack: Track? {
         guard !playback.isStereoSynchronizationCheckActive else { return nil }
         guard let id = playback.selectedLibraryTrackID else { return nil }
-        return library.tracks.first { $0.id == id }
+        return library.track(id: id)
     }
 
-    public var nowPlaying: NowPlayingPresentation {
+    private func makeNowPlayingPresentation() -> NowPlayingPresentation {
         if playback.isStereoSynchronizationCheckActive {
             let state: NowPlayingDisplayState
             if playback.isBusy { state = .loading }
@@ -99,30 +102,42 @@ public final class QueueStore {
         playback.onPositionChange = { [weak self] position in
             self?.recordPosition(position)
             self?.onTrackPosition?(position)
-            self?.publishNowPlaying()
+            self?.refreshNowPlaying()
         }
         playback.onPlaybackStateChange = { [weak self] state in
+            self?.library.setPlaybackActive(state == .playing)
             self?.onPlaybackStateChange?(state)
-            self?.publishNowPlaying()
+            self?.refreshNowPlaying()
         }
-        playback.onPresentationChange = { [weak self] in self?.publishNowPlaying() }
+        playback.onPresentationChange = { [weak self] in self?.refreshNowPlaying() }
         playback.onCommunicationFailure = { [weak self] diagnostic in
             self?.onTrackEnded?(.error)
             self?.errorMessage = "通信が切断されました。再接続後に再試行してください。\n\(diagnostic.details)"
-            self?.publishNowPlaying()
+            self?.refreshNowPlaying()
         }
         playback.onRendererTrackChanged = { [weak self] in
             self?.onTrackEnded?(.error)
             self?.errorMessage = "スピーカー側で別の曲へ変更されました。再生キューは保持しています。"
-            self?.publishNowPlaying()
+            self?.refreshNowPlaying()
         }
         playback.onShutdown = { [weak self] in self?.onTrackEnded?(.playerDestroyed) }
+        library.onTracksChanged = { [weak self] in self?.refreshNowPlaying() }
+        refreshNowPlaying(force: true)
     }
 
-    deinit { positionSaveTask?.cancel() }
+    deinit { positionSaveTask?.cancel(); stereoPrewarmTask?.cancel() }
 
     public func restore() async {
-        do { snapshot = try await repository.loadQueue() }
+        do {
+            snapshot = try await repository.loadQueue()
+            if snapshot.items.count > Self.maximumItemCount {
+                let currentID = currentItemID
+                snapshot.items = Array(snapshot.items.suffix(Self.maximumItemCount))
+                snapshot.currentIndex = currentID.flatMap { id in snapshot.items.firstIndex { $0.id == id } }
+                    ?? (snapshot.items.isEmpty ? nil : 0)
+                await persist()
+            }
+        }
         catch { errorMessage = error.localizedDescription }
     }
 
@@ -135,8 +150,20 @@ public final class QueueStore {
             onTrackEnded?(.queueReplacement)
             currentPlaySource = snapshot.shuffleEnabled ? .shuffle : source
             nextSelectionType = .manual
-            var values = trackIDs
-            if snapshot.shuffleEnabled { values.shuffle() }
+            var values: [Track.ID]
+            if snapshot.shuffleEnabled {
+                values = trackIDs
+                if let trackID, let index = values.firstIndex(of: trackID) {
+                    values.remove(at: index)
+                    values.shuffle()
+                    values.insert(trackID, at: 0)
+                } else {
+                    values.shuffle()
+                }
+                values = Array(values.prefix(Self.maximumItemCount))
+            } else {
+                values = limitedTrackIDs(trackIDs, startingAt: trackID)
+            }
             snapshot.items = values.map { QueueItem(trackID: $0) }
             if let trackID, let index = snapshot.items.firstIndex(where: { $0.trackID == trackID }) { snapshot.currentIndex = index }
             else { snapshot.currentIndex = 0 }
@@ -148,17 +175,42 @@ public final class QueueStore {
     }
 
     public func playNext(trackIDs: [Track.ID]) async {
-        let additions = trackIDs.map { QueueItem(trackID: $0) }
+        let additions = trackIDs.suffix(Self.maximumItemCount).map { QueueItem(trackID: $0) }
+        guard !additions.isEmpty else { return }
         let insertion = min((snapshot.currentIndex ?? -1) + 1, snapshot.items.count)
         snapshot.items.insert(contentsOf: additions, at: insertion)
         if snapshot.currentIndex == nil, !snapshot.items.isEmpty { snapshot.currentIndex = 0 }
+        trimOldestItemsIfNeeded()
         await persist()
     }
 
     public func append(trackIDs: [Track.ID]) async {
-        snapshot.items.append(contentsOf: trackIDs.map { QueueItem(trackID: $0) })
+        let additions = trackIDs.suffix(Self.maximumItemCount).map { QueueItem(trackID: $0) }
+        guard !additions.isEmpty else { return }
+        snapshot.items.append(contentsOf: additions)
         if snapshot.currentIndex == nil, !snapshot.items.isEmpty { snapshot.currentIndex = 0 }
+        trimOldestItemsIfNeeded()
         await persist()
+    }
+
+    public func playImmediately(
+        trackID: Track.ID,
+        source: MyMusicPlaySource = .unknown
+    ) async {
+        await withPlaybackTransition {
+            onTrackEnded?(.directSelection)
+            let previousIndex = snapshot.currentIndex
+            let insertionIndex = min((previousIndex ?? -1) + 1, snapshot.items.count)
+            snapshot.items.insert(QueueItem(trackID: trackID), at: insertionIndex)
+            currentPlaySource = source
+            nextSelectionType = .manual
+            snapshot.currentIndex = insertionIndex
+            snapshot.position = 0
+            currentWasRemoved = false
+            trimOldestItemsIfNeeded()
+            await persist()
+            await playCurrent()
+        }
     }
 
     public func move(fromOffsets: IndexSet, toOffset: Int) async {
@@ -171,11 +223,18 @@ public final class QueueStore {
         await persist()
     }
 
+    public func move(itemID: QueueItem.ID, toOffset: Int) async {
+        guard let source = snapshot.items.firstIndex(where: { $0.id == itemID }) else { return }
+        await move(fromOffsets: IndexSet(integer: source), toOffset: toOffset)
+    }
+
     public func remove(atOffsets offsets: IndexSet) async {
         let currentID = currentItemID
+        let removedIDs = Set(offsets.map { snapshot.items[$0].id })
         let removedCurrent = currentID.map { id in offsets.contains { snapshot.items[$0].id == id } } ?? false
         let oldIndex = snapshot.currentIndex ?? 0
         for index in offsets.sorted(by: >) { snapshot.items.remove(at: index) }
+        selectedItemIDs.subtract(removedIDs)
         if removedCurrent {
             currentWasRemoved = playback.playbackState == .playing || playback.playbackState == .paused
             snapshot.currentIndex = snapshot.items.isEmpty ? nil : min(oldIndex, snapshot.items.count - 1)
@@ -183,6 +242,11 @@ public final class QueueStore {
             snapshot.currentIndex = snapshot.items.firstIndex(where: { $0.id == currentID })
         }
         await persist()
+    }
+
+    public func remove(itemID: QueueItem.ID) async {
+        guard let index = snapshot.items.firstIndex(where: { $0.id == itemID }) else { return }
+        await remove(atOffsets: IndexSet(integer: index))
     }
 
     public func removeSelected() async {
@@ -212,6 +276,17 @@ public final class QueueStore {
     }
 
     public func moveSelectedNext() async { await moveNext(itemIDs: selectedItemIDs) }
+
+    public func moveItem(id: QueueItem.ID, by offset: Int) async {
+        guard let source = snapshot.items.firstIndex(where: { $0.id == id }) else { return }
+        let destination = min(max(0, source + offset), snapshot.items.count - 1)
+        guard source != destination else { return }
+        let currentID = currentItemID
+        let item = snapshot.items.remove(at: source)
+        snapshot.items.insert(item, at: destination)
+        if let currentID { snapshot.currentIndex = snapshot.items.firstIndex(where: { $0.id == currentID }) }
+        await persist()
+    }
 
     public func clear() async {
         onTrackEnded?(.queueReplacement)
@@ -294,11 +369,37 @@ public final class QueueStore {
     public func dismissError() { errorMessage = nil }
     public func persistForLifecycle() async { await persist() }
 
-    public func track(for item: QueueItem) -> Track? { library.tracks.first { $0.id == item.trackID } }
+    public func track(for item: QueueItem) -> Track? { library.track(id: item.trackID) }
 
     private var currentItemID: QueueItem.ID? {
         guard let index = snapshot.currentIndex, snapshot.items.indices.contains(index) else { return nil }
         return snapshot.items[index].id
+    }
+
+    private func limitedTrackIDs(_ trackIDs: [Track.ID], startingAt trackID: Track.ID?) -> [Track.ID] {
+        guard trackIDs.count > Self.maximumItemCount else { return trackIDs }
+        guard let trackID, let current = trackIDs.firstIndex(of: trackID) else {
+            return Array(trackIDs.prefix(Self.maximumItemCount))
+        }
+        let end = min(trackIDs.count, current + Self.maximumItemCount)
+        let missingPrefixCount = Self.maximumItemCount - (end - current)
+        let start = max(0, current - missingPrefixCount)
+        return Array(trackIDs[start..<end])
+    }
+
+    private func trimOldestItemsIfNeeded() {
+        let overflow = snapshot.items.count - Self.maximumItemCount
+        guard overflow > 0 else { return }
+        let removedIDs = Set(snapshot.items.prefix(overflow).map(\.id))
+        snapshot.items.removeFirst(overflow)
+        selectedItemIDs.subtract(removedIDs)
+        guard let currentIndex = snapshot.currentIndex else { return }
+        if currentIndex >= overflow {
+            snapshot.currentIndex = currentIndex - overflow
+        } else {
+            currentWasRemoved = playback.playbackState == .playing || playback.playbackState == .paused
+            snapshot.currentIndex = snapshot.items.isEmpty ? nil : 0
+        }
     }
 
     private func advanceAfterCompletion() async {
@@ -344,8 +445,27 @@ public final class QueueStore {
         }
         if resumePosition > 0 { await playback.seek(to: resumePosition) }
         onTrackStarted?(track.id, track.duration, currentPlaySource, nextSelectionType)
-        publishNowPlaying()
+        scheduleNextStereoPrewarm()
+        refreshNowPlaying()
         errorMessage = nil
+    }
+
+    private func scheduleNextStereoPrewarm() {
+        stereoPrewarmTask?.cancel()
+        guard playback.isSonyStereoSelected,
+              let currentIndex = snapshot.currentIndex else { return }
+        let nextIndex: Int
+        if currentIndex + 1 < snapshot.items.count { nextIndex = currentIndex + 1 }
+        else if snapshot.repeatMode == .all, !snapshot.items.isEmpty { nextIndex = 0 }
+        else { return }
+        let trackID = snapshot.items[nextIndex].trackID
+        stereoPrewarmTask = Task { [weak self] in
+            guard let self else { return }
+            await self.library.withTemporaryTrackAccess(trackID) { [weak self] url in
+                guard let self, !Task.isCancelled else { return }
+                await self.playback.prewarmStereoMedia(fileURL: url)
+            }
+        }
     }
 
     private func withPlaybackTransition(_ operation: () async -> Void) async {
@@ -363,15 +483,22 @@ public final class QueueStore {
         await playCurrent()
     }
 
-    private func publishNowPlaying() { onNowPlayingChange?(nowPlaying) }
+    private func refreshNowPlaying(force: Bool = false) {
+        let presentation = makeNowPlayingPresentation()
+        guard force || presentation != nowPlaying else { return }
+        nowPlaying = presentation
+        onNowPlayingChange?(presentation)
+    }
 
     private func recordPosition(_ position: TimeInterval) {
         snapshot.position = max(0, position)
-        positionSaveTask?.cancel()
+        guard positionSaveTask == nil else { return }
         positionSaveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(5))
             guard let self, !Task.isCancelled else { return }
-            await self.persist()
+            do { try await self.repository.saveQueuePosition(self.snapshot.position) }
+            catch { self.errorMessage = error.localizedDescription }
+            self.positionSaveTask = nil
         }
     }
 

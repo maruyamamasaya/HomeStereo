@@ -71,6 +71,19 @@ public protocol RendererControlling: Sendable {
 }
 
 @MainActor
+public protocol LocalAudioPlaying: AnyObject {
+    var onPlaybackEnded: (@MainActor () -> Void)? { get set }
+    var onPlaybackFailure: (@MainActor (String) -> Void)? { get set }
+    func load(fileURL: URL) throws
+    func play()
+    func pause()
+    func stop()
+    func seek(to position: TimeInterval)
+    func currentTime() -> TimeInterval
+    func itemDuration() -> TimeInterval
+}
+
+@MainActor
 public protocol PlaylistFileServicing: AnyObject {
     func chooseImportURL() -> URL?
     func chooseExportURL(defaultName: String) -> URL?

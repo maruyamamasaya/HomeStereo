@@ -98,4 +98,4 @@ HTTP serverはRendererへの経路上のLAN IPv4へbindし、8765から空きpor
 - SOAP失敗: 画面のaction、HTTP status、UPnP code、descriptionを記録。
 - Pause失敗: 検証したHG1／HG10はUPnP 701でPauseを拒否する。HomeStereoは停止確認付きStopへfallbackし、再開位置は保持しない。
 - Sonyステレオが表示されない: SRS-HG1とSRS-HG10の両方がAVTransport付きで検出されているか確認し、再検索する。
-- Sonyステレオの最初の再生が遅い: 再生前に選択曲全体を左右の一時WAVへ分離する。処理中表示が消えるまで待つ。
+- Sonyステレオの最初の再生が遅い: 選曲直後とQueue再生中の次曲を先行変換する。先読み前に再生した直接選曲は左右WAV生成完了まで待つ。同一音源・設定の直近2件は再利用する。

@@ -77,7 +77,11 @@ public final class BackupStore {
         return HomeStereoBackup(
             exportedAt: exportedAt, appVersion: appVersion,
             playlists: playlists.playlists.map { playlist in
-                BackupPlaylist(id: playlist.id, name: playlist.name, createdAt: playlist.createdAt, updatedAt: playlist.updatedAt, tracks: playlist.items.map { reference($0.trackID) })
+                BackupPlaylist(
+                    id: playlist.id, name: playlist.name, createdAt: playlist.createdAt,
+                    updatedAt: playlist.updatedAt, kind: playlist.kind,
+                    tracks: playlist.items.map { reference($0.trackID) }
+                )
             },
             favorites: listening.favorites.map { BackupFavorite(track: reference($0.trackID), addedAt: $0.addedAt) },
             playbackEvents: listening.events.map {
@@ -100,7 +104,11 @@ public final class BackupStore {
             }
         }
         let importedPlaylists = document.playlists.map {
-            Playlist(id: $0.id, name: $0.name, createdAt: $0.createdAt, updatedAt: $0.updatedAt, items: $0.tracks.map { PlaylistItem(trackID: id($0)) })
+            Playlist(
+                id: $0.id, name: $0.name, createdAt: $0.createdAt,
+                updatedAt: $0.updatedAt, kind: $0.kind,
+                items: $0.tracks.map { PlaylistItem(trackID: id($0)) }
+            )
         }
         let importedFavorites = document.favorites.map { Favorite(trackID: id($0.track), addedAt: $0.addedAt) }
         let importedEvents = document.playbackEvents.map {

@@ -1,5 +1,17 @@
 import Foundation
 
+public enum PlaylistKind: String, CaseIterable, Sendable {
+    case regular
+    case work
+
+    public func accepts(_ track: Track) -> Bool {
+        switch self {
+        case .regular: !track.isEligibleForWorkPlayback
+        case .work: track.isEligibleForWorkPlayback
+        }
+    }
+}
+
 public struct PlaylistItem: Identifiable, Hashable, Sendable {
     public let id: UUID
     public let trackID: Track.ID
@@ -8,13 +20,24 @@ public struct PlaylistItem: Identifiable, Hashable, Sendable {
 
 public struct Playlist: Identifiable, Hashable, Sendable {
     public let id: UUID
+    public var myMusicPlaylistID: UUID?
     public var name: String
     public let createdAt: Date
     public var updatedAt: Date
+    public var kind: String
+    public var tags: [String]
     public var items: [PlaylistItem]
 
-    public init(id: UUID = UUID(), name: String, createdAt: Date = .now, updatedAt: Date = .now, items: [PlaylistItem] = []) {
-        self.id = id; self.name = name; self.createdAt = createdAt; self.updatedAt = updatedAt; self.items = items
+    public var playlistKind: PlaylistKind { PlaylistKind(rawValue: kind) ?? .regular }
+
+    public init(
+        id: UUID = UUID(), myMusicPlaylistID: UUID? = nil, name: String,
+        createdAt: Date = .now, updatedAt: Date = .now, kind: String = "regular",
+        tags: [String] = [], items: [PlaylistItem] = []
+    ) {
+        self.id = id; self.myMusicPlaylistID = myMusicPlaylistID; self.name = name
+        self.createdAt = createdAt; self.updatedAt = updatedAt; self.kind = kind
+        self.tags = tags; self.items = items
     }
 }
 
