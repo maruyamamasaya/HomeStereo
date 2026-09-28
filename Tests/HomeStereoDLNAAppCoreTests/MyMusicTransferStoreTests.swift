@@ -141,6 +141,92 @@ final class MyMusicTransferStoreTests: XCTestCase {
         XCTAssertTrue(try MyMusicJSONCodec.decodePlaybackEvents(emptyData).events.isEmpty)
     }
 
+    func testPlaybackExportFiltersByPlayedAtAndCountsOnlyUnresolvedEventsInRange() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let linked = try await fixture.insertTrack(repository: repository, name: "linked.mp3", title: "Linked")
+        let unlinked = try await fixture.insertTrack(repository: repository, name: "unlinked.mp3", title: "Unlinked")
+        try await repository.saveMyMusicTrackLinks([fixture.link(linked, externalID: UUID())])
+        let january = Date(timeIntervalSince1970: 1_704_110_400)
+        let february = Date(timeIntervalSince1970: 1_706_788_800)
+        _ = try await repository.appendLocalMyMusicPlaybackEvent(
+            fixture.localEvent(trackID: linked.id, id: "january-linked", playedAt: january)
+        )
+        _ = try await repository.appendLocalMyMusicPlaybackEvent(
+            fixture.localEvent(trackID: unlinked.id, id: "january-unlinked", playedAt: january)
+        )
+        _ = try await repository.appendLocalMyMusicPlaybackEvent(
+            fixture.localEvent(trackID: linked.id, id: "february-linked", playedAt: february)
+        )
+        let files = FakeMyMusicFiles()
+        let store = MyMusicTransferStore(repository: repository, files: files)
+
+        await store.export(.playbackEvents, playbackEventsRange: january..<february)
+
+        let document = try MyMusicJSONCodec.decodePlaybackEvents(XCTUnwrap(files.writtenData))
+        XCTAssertEqual(document.events.map(\.eventId), ["january-linked"])
+        XCTAssertEqual(store.exportResult?.exportedEvents, 1)
+        XCTAssertEqual(store.exportResult?.unresolvedEvents, 1)
+        XCTAssertEqual(store.exportResult?.playbackEventsRange, january..<february)
+    }
+
+    func testExportCanReplacePendingImportPreview() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let files = FakeMyMusicFiles()
+        let store = MyMusicTransferStore(repository: repository, files: files)
+        let previewData = try MyMusicJSONExportService().exportPreferences([], exportedAt: fixture.now)
+        await store.prepareImport(.preferences, data: previewData)
+        XCTAssertEqual(store.state, .preview)
+
+        await store.export(.playbackEvents)
+
+        XCTAssertEqual(store.state, .completed)
+        XCTAssertNil(store.preview)
+        XCTAssertEqual(store.exportResult?.kind, .playbackEvents)
+        XCTAssertNotNil(files.writtenData)
+    }
+
+    func testPreferencesExportPreviewsMacChangesAndClearsThemOnlyAfterWriting() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let track = try await fixture.insertTrack(repository: repository)
+        let externalID = UUID()
+        try await repository.saveMyMusicTrackLinks([fixture.link(track, externalID: externalID)])
+        let imported = try MyMusicJSONExportService().exportPreferences([
+            MyMusicPreferenceRecord(trackID: externalID, playbackPreference: 0, favorite: false)
+        ], exportedAt: fixture.now)
+        _ = try await MyMusicPersistenceService(repository: repository).importPreferences(imported)
+        try await repository.saveFavorite(Favorite(trackID: track.id, addedAt: fixture.now))
+        let files = FakeMyMusicFiles()
+        let store = MyMusicTransferStore(repository: repository, files: files)
+
+        await store.preparePreferencesExport()
+
+        XCTAssertEqual(store.state, .exportPreview)
+        XCTAssertEqual(store.preferencesExportPreview?.pendingChanges.count, 1)
+        XCTAssertEqual(store.preferencesExportPreview?.items.first?.title, track.title)
+        XCTAssertEqual(store.preferencesExportPreview?.items.first?.favorite, true)
+        XCTAssertNil(files.writtenData)
+
+        store.cancelPreferencesExport()
+        XCTAssertEqual(store.state, .idle)
+        let pendingAfterCancel = try await repository.loadPendingMyMusicPreferenceExports()
+        XCTAssertEqual(pendingAfterCancel.count, 1)
+
+        await store.preparePreferencesExport()
+        await store.confirmPreferencesExport()
+
+        XCTAssertEqual(store.state, .completed)
+        let document = try MyMusicJSONCodec.decodePreferences(XCTUnwrap(files.writtenData))
+        XCTAssertEqual(document.tracks.map(\.trackId), [externalID])
+        let pendingAfterWrite = try await repository.loadPendingMyMusicPreferenceExports()
+        XCTAssertTrue(pendingAfterWrite.isEmpty)
+    }
+
     func testPlaylistApplyRunsRefreshHookAfterDatabaseCommit() async throws {
         let fixture = try TransferFixture()
         defer { fixture.cleanup() }
@@ -348,9 +434,9 @@ private final class TransferFixture {
         )
     }
 
-    func localEvent(trackID: UUID, id: String) -> LocalMyMusicPlaybackEvent {
+    func localEvent(trackID: UUID, id: String, playedAt: Date? = nil) -> LocalMyMusicPlaybackEvent {
         LocalMyMusicPlaybackEvent(
-            eventID: id, homeStereoTrackID: trackID, playedAt: now,
+            eventID: id, homeStereoTrackID: trackID, playedAt: playedAt ?? now,
             playDuration: 10, trackDuration: 60, completed: false, skipped: false,
             playSource: .library, selectionType: .manual
         )

@@ -27,10 +27,10 @@
 - schema v5／v6／v7／v8／v9→v13 migration、拡張音源metadata round trip、path／Track ID transaction rollback
 - 実FLAC fixtureのVorbis Comment（基本情報、作曲者、曲／ディスク番号）読取とformat固有metadata正規化
 - MyMusic 4文書のversion、field名の`trackID`／`trackId`差、UTC日時、値域、重複ID、optional省略、内部交換model round-trip
-- MyMusic Track ID対応の再読込、再Import、fingerprint／曖昧metadata照合、Preferences merge／未解決報告、event重複排除／platform維持、transaction rollback
+- MyMusic Track ID対応の再読込、再Import、fingerprint／曖昧metadata照合、Preferences merge／未解決報告、Mac側Favorite／Good／Badのdirty曲限定Canonical ID Export、Import時dirty解除、Preview世代token一致時だけ送信済み化、event重複排除／platform維持、transaction rollback
 - MyMusic実再生Sessionのpause／resume／seek、completed／skipped、selectionType、実Queue再生からSQLite保存、未連携eventの遅延解決export
 - ローカル分析のMyMusic集計済み再生回数（未紐付け曲を含む）優先、event fallback、完走／Early Skip境界、期間集計、ランキング、入口／選択種別、Good／Bad未設定の分離、曲一覧からのMyMusic互換`±1`累積と`-10...+10`境界保存、空／不明duration、event冪等保存と集計非重複、履歴reset時のMyMusic集計／Favorite／Preference／Playlist保持、Track削除後の未解決履歴、schema v12再起動復元
-- MyMusic手動Importの4文書Preview、文書種別／version拒否、Preview／cancel非更新、確認後適用、二重操作防止、適用後の画面Store再読込hook、曲単位のTrack ID／snapshot適用状況、event export件数／未解決警告／空配列、既定file名、failed状態
+- MyMusic手動Importの4文書Preview、Preferences差分Exportの対象件数／曲一覧Previewと保存成功後だけの解除、文書種別／version拒否、Preview／cancel非更新、確認後適用、二重操作防止、Previewから別Exportへの切替、適用後の画面Store再読込hook、曲単位のTrack ID／snapshot適用状況、event期間指定export／期間内未解決件数／空配列、既定file名、failed状態
 - MyMusic Playlist JSONの単一／複数形式、NFCかつcase-sensitiveなrelative path、保存済みCanonical ID優先、曖昧／競合保留、部分Import、playlistID冪等更新、ローカルTrack ID非出力、snapshot除外後の参照保持、transaction rollback
 - ジャンルプリセットversion 1 JSONのstrict decode／round-trip、未分類の新旧意味、順序永続化、transaction rollback、複数ジャンル／未分類／固定分類filter
 - Sonyステレオの48kHz既定値、同期チェック音の16秒・約-18dBFS・48kHz PCM生成、左右同一波形、指定側へのframe単位遅延、通常曲／Queue完走非干渉
@@ -40,7 +40,7 @@
 
 性能testは環境変数で明示実行する。2026-09-26に30,000曲fixtureを成功し、詳細は[`docs/performance.md`](docs/performance.md)へ記録した。
 
-2026-09-27時点で`./scripts/verify.sh`は成功。XCTest 92件中91件成功＋性能test 1件skip、Swift Testing 77件成功。macOS Debug build成功。
+2026-09-28時点で`./scripts/verify.sh`は成功。XCTest 97件中96件成功＋性能test 1件skip、Swift Testing 77件成功。macOS Debug build成功。
 
 macOS UIはKeyboard、VoiceOver、Light／Dark、Reduce Motion、狭いwindow、drag & dropをREADMEに沿って手動確認する。物理UI操作を実施していないrunでは自動test成功を手動確認済みとして扱わない。
 

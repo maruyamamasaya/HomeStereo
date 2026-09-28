@@ -16,7 +16,7 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - 単一ファイルのtoken付きHTTP配信（GET/HEAD/Range）
 - AVTransport／RenderingControl SOAP操作と診断
 - `NavigationSplitView`のデバイス／再生UI、`⌘O`、Space
-- sandbox read-only file access、network client/server entitlement
+- sandbox user-selected read/write file access、network client/server entitlement。write権限は標準保存panelのJSON出力に使い、音源は実装上読み取り専用
 - 複数folder bookmark、SQLite index、差分scan、missing／notice／進捗、LibraryからDLNA単曲再生
 - 検索／sort可能な曲・Album・Artist画面、詳細収録曲、上限付きArtwork cache
 - 永続Queue、編集、前後移動、Shuffle／Repeat、AVTransport完走連携
@@ -30,7 +30,7 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - schema v1 JSON Export／preview／transactional Import、Track hint照合、rollback
 - MyMusic連携用の曲一覧v1、Preferences v2、Playback Events v1を独立文書として扱うCodable DTO、全体検証、JSON非依存交換model、Import／Export service
 - SQLite schema v10のMyMusic Canonical Track ID、snapshot在籍状態、Canonical Playlist ID、Preferences、互換Playback Events永続化。実再生Session、位置差分による実聴時間、終了理由判定、未連携eventの保持とexport時の遅延解決に対応
-- 管理Sidebarの「MyMusic連携」からLibrary／Playlist／Preferences／Playback Eventsの4種類を個別にPreview／確認Importし、標準保存panelへExportする手動連携画面
+- 管理Sidebarの「MyMusic連携」からLibrary／Playlist／Preferences／Playback Eventsの4種類を個別にPreview／確認Importし、標準保存panelへExportする手動連携画面。PreferencesはJSON schemaを変えず、MyMusic ImportでMacを同じ状態へ揃えた後、schema v14で記録するMac側のFavorite／Good／Bad変更曲だけを件数・一覧Preview付きで差分Exportする。保存成功時だけ同じ変更tokenを送信済みにし、Preview後の再編集は次回分へ残す。Playback Eventsは既定の直近1か月または任意の開始日〜終了日、全期間を選んで書き出せる。Import Preview表示中でも別のImport／Exportへ切り替えられる
 - 管理Sidebarの「MyMusic適用状況」で全HomeStereo曲のローカルTrack ID、MyMusic TrackID、snapshot在籍、照合方法、Library JSON出力可否、Preferences／Events／MyMusic Playlist適用を曲単位で確認可能。Playlist／Preferences Import後は対応する画面Storeを即時再読込する
 - 管理Sidebarの臨時「開発者」で、MyMusic向け4種類のJSONを現在値から生成または既存ファイルから開き、文書設定と曲／イベント／プレイリストを1件ずつ表形式で編集して、形式検証後に別ファイルへ書き出せる。編集はSQLiteへ反映しない
 - MyMusic Playlist JSON v1の単一／複数形式、Canonical Track ID完全一致による部分Import、playlistID単位の冪等更新、MyMusic未接続曲を除外するExport。`kind`を維持し、通常と作業用をSidebarの別画面へ分離する。作業用曲は再生時間で推測せずgenreの「作業用BGM」だけで判定する
@@ -48,7 +48,7 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - 曲一覧とアルバム／アーティスト詳細は、行のシングルクリックでは選択だけを行い、ダブルクリックで現在再生を変えずキュー末尾へ1回追加する。行とは独立した再生ボタンだけが現在曲へ割り込み、元の再生を終了してクリック曲を現在位置の直後へ挿入し、既存の待ち曲を保持したまま1段下げる。
 - 曲一覧の左端には、今すぐ再生、キュー末尾へ追加、追加先を選べるプレイリストメニュー、お気に入り、MyMusic互換のGood／Badボタンをコンパクトに並べる。Goodは1クリックごとに`+1`、Badは`-1`し、`-10...+10`で上限・下限を設けてSQLiteへ保存する。正のGood／負のBadには現在の強度を小さなバッジで表示する。
 - 用途別SidebarとArtwork／基本操作／出力先を備えた常設Now Playingバー
-- 設定または「表示」メニューから、システム／シンプルダーク／Living Aurora／Pulse Neon／Blue Cosmosを選択し、端末内へ保存できるテーマ設定。GitHub `maruyamamasaya/living-aurora-ui` commit `7138d4a…`のtokenと光を面として扱う設計をmacOS向けに縮小し、Reduce Transparency／increased contrastでは装飾光を外す
+- 設定または「表示」メニューから、システム／シンプルダーク／Living Aurora／Pulse Neon／Blue Cosmosを選択し、端末内へ保存できるテーマ設定。GitHub `maruyamamasaya/living-aurora-ui` commit `7138d4a…`のtokenと光を面として扱う設計をmacOS向けに縮小し、全detail画面、sidebar、inspector、案内barをテーマ背景＋半透明surfaceで統一する。曲TableのmacOS標準交互行背景は無効化し、Reduce Transparency／increased contrastでは装飾光を外す
 - 1280×760pxを初期値とし、1920×1080の全画面から960×540級までを対象にしたメインWindow。狭い幅ではQueue Inspectorを自動退避してメイン領域を確保し、ToolbarからQueue画面へ移動できる。短い高さではSidebarのセクション見出しだけを省略して全項目を表示する。Renderer選択付きNow Playingバーは文字を縮小せず幅に応じて2段になる
 - スピーカー選択から曲選択へ進む初回ガイドと、無効な再生操作の理由表示
 - Queue曲／直接ファイル／Renderer変更を統合するNow Playing表示modelと6状態表示
@@ -86,7 +86,7 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - HomeStereo本体でL soundbar（SRS-HG10）をLEFT、R soundbar（SRS-HG1）をRIGHTとして選ぶSonyステレオ出力。選択曲をAVFoundationで左右のPCM WAVへ分離し、2つのHTTP server／UPnP controllerから同時送信する
 - Sonyステレオの既定出力品質を安定優先48kHz／16-bit PCMとし、下部バーから現在の遅延設定を通した16秒・ピーク約-18dBFSの3連クリック群を再生する聴感同期チェック。通常曲選択とQueue完走処理には影響しない
 - Sonyステレオ再生中に下部バーの通信リセットから、遅延・L/R・音量・選択曲を保持したまま両Rendererを停止し、左右のHTTP配信と再生URIを破棄して新規接続する。再生中だった場合は現在曲を先頭から同期再開する
-- XCTest 87件中86件成功＋任意実行の性能test 1件skip、Swift Testing 77件成功、ad-hoc署名Debug build
+- XCTest 97件中96件成功＋任意実行の性能test 1件skip、Swift Testing 77件成功、ad-hoc署名Debug build
 - このMac向けad-hoc署名Release版を、実行中copyの終了、clean build、bundle単位の置換、署名・build番号・SHA-256照合、一時成果物削除を行う`./scripts/deploy-macos.sh`で`/Applications/HomeStereo.app`へ一意に配置
 
 ## Current Issues

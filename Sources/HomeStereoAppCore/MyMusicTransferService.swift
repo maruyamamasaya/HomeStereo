@@ -46,6 +46,21 @@ public struct MyMusicImportPreview: Equatable, Sendable {
     public let details: [MyMusicImportPreviewDetail]
 }
 
+public struct MyMusicPreferenceExportPreviewItem: Identifiable, Equatable, Sendable {
+    public let id: Track.ID
+    public let title: String
+    public let artist: String
+    public let myMusicTrackID: UUID
+    public let playbackPreference: Int
+    public let favorite: Bool
+}
+
+public struct MyMusicPreparedPreferencesExport: Equatable, Sendable {
+    public let data: Data
+    public let pendingChanges: [PendingMyMusicPreferenceExport]
+    public let items: [MyMusicPreferenceExportPreviewItem]
+}
+
 public enum MyMusicTransferServiceError: LocalizedError, Equatable, Sendable {
     case invalidUTF8
     case malformedJSON
@@ -93,16 +108,20 @@ public struct MyMusicTransferService: Sendable {
         }
     }
 
-    public func export(_ kind: MyMusicDocumentKind) async throws -> (
+    public func export(
+        _ kind: MyMusicDocumentKind, playbackEventsRange: Range<Date>? = nil
+    ) async throws -> (
         data: Data, exported: Int?, unresolved: Int?, total: Int?, conflicts: Int?
     ) {
         switch kind {
         case .library:
             return (try await persistence.exportLibrary(), nil, nil, nil, nil)
         case .preferences:
-            return (try await persistence.exportPreferences(exportedAt: clock()), nil, nil, nil, nil)
+            return (try await preparePreferencesExport().data, nil, nil, nil, nil)
         case .playbackEvents:
-            let result = try await persistence.exportPlaybackEventsWithReport(exportedAt: clock())
+            let result = try await persistence.exportPlaybackEventsWithReport(
+                exportedAt: clock(), playedAtRange: playbackEventsRange
+            )
             return (result.data, result.exported, result.unresolved, nil, nil)
         case .playlists:
             let result = try await persistence.exportPlaylists()
@@ -111,6 +130,33 @@ public struct MyMusicTransferService: Sendable {
                 result.totalTracks, result.conflictedTracks
             )
         }
+    }
+
+    public func preparePreferencesExport() async throws -> MyMusicPreparedPreferencesExport {
+        let prepared = try await persistence.preparePreferencesExport(exportedAt: clock())
+        let context = try await repository.loadMyMusicMatchContext()
+        let tracksByID = Dictionary(uniqueKeysWithValues: context.tracks.map { ($0.id, $0) })
+        return MyMusicPreparedPreferencesExport(
+            data: prepared.data,
+            pendingChanges: prepared.pendingChanges,
+            items: prepared.pendingChanges.prefix(100).map { change in
+                let track = tracksByID[change.homeStereoTrackID]
+                return MyMusicPreferenceExportPreviewItem(
+                    id: change.homeStereoTrackID,
+                    title: track?.title ?? "不明な曲",
+                    artist: track?.artist ?? "",
+                    myMusicTrackID: change.record.trackID,
+                    playbackPreference: change.record.playbackPreference,
+                    favorite: change.record.favorite
+                )
+            }
+        )
+    }
+
+    public func acknowledgePreferencesExport(
+        _ pendingChanges: [PendingMyMusicPreferenceExport]
+    ) async throws {
+        try await persistence.acknowledgePreferencesExport(pendingChanges)
     }
 
     private func previewLibrary(_ data: Data) async throws -> MyMusicImportPreview {
@@ -145,8 +191,8 @@ public struct MyMusicTransferService: Sendable {
     private func previewPreferences(_ data: Data) async throws -> MyMusicImportPreview {
         let document = try MyMusicJSONImportService().importPreferences(data)
         let context = try await repository.loadMyMusicMatchContext()
-        let existing = Dictionary(uniqueKeysWithValues: try await repository.loadMyMusicPreferences().map {
-            ($0.myMusicTrackID, $0)
+        let existing = Dictionary(uniqueKeysWithValues: try await repository.loadCurrentMyMusicPreferenceRecords().map {
+            ($0.trackID, $0)
         })
         let links = Dictionary(uniqueKeysWithValues: context.links.map { ($0.myMusicTrackID, $0.homeStereoTrackID) })
         let tracks = Dictionary(uniqueKeysWithValues: context.tracks.map { ($0.id, $0) })

@@ -290,7 +290,7 @@ struct PlaylistsView: View {
                 .disabled(store.selectedItemIDs.isEmpty)
         }
         .padding(12)
-        .background(.bar)
+        .homeStereoThemeBar()
     }
 
     private func playlistManagementMenu(_ playlist: Playlist) -> some View {
@@ -397,7 +397,7 @@ private struct PlaylistTrackPicker: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(.bar)
+                .homeStereoThemeBar()
 
                 if filteredTracks.isEmpty {
                     ContentUnavailableView.search(text: searchText)

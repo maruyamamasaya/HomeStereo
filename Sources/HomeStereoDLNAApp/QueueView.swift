@@ -44,7 +44,7 @@ struct QueueView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .background(.bar)
+                .homeStereoThemeBar()
                 .overlay(alignment: .bottom) { Divider() }
             }
         }

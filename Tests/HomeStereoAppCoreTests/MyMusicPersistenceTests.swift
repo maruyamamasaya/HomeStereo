@@ -242,6 +242,96 @@ final class MyMusicPersistenceTests: XCTestCase {
         XCTAssertEqual(favorites.map(\.trackID), [one.id])
     }
 
+    func testPreferencesExportUsesCurrentMacFavoritesAndGoodBadWithCanonicalIDs() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let now = Date(timeIntervalSince1970: 1_000)
+        let firstID = UUID(), secondID = UUID()
+        let first = fixture.track(relativePath: "first.flac", title: "First", artist: "A", album: "Album")
+        let second = fixture.track(relativePath: "second.flac", title: "Second", artist: "A", album: "Album")
+        let unlinked = fixture.track(relativePath: "unlinked.flac", title: "Unlinked", artist: "A", album: "Album")
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        try await fixture.insert([first, second, unlinked], into: repository)
+        try await repository.saveMyMusicTrackLinks([
+            fixture.link(home: first, externalID: firstID),
+            fixture.link(home: second, externalID: secondID),
+        ])
+        let imported = try MyMusicJSONExportService().exportPreferences([
+            MyMusicPreferenceRecord(trackID: firstID, playbackPreference: 4, favorite: true)
+        ], exportedAt: now)
+        _ = try await MyMusicPersistenceService(repository: repository).importPreferences(imported)
+
+        try await repository.deleteFavorite(trackID: first.id)
+        try await repository.saveTrackPreference(
+            TrackPreference(trackID: first.id, playbackPreference: -3, updatedAt: now)
+        )
+        try await repository.saveFavorite(Favorite(trackID: second.id, addedAt: now))
+        try await repository.saveTrackPreference(
+            TrackPreference(trackID: second.id, playbackPreference: 2, updatedAt: now)
+        )
+        try await repository.saveFavorite(Favorite(trackID: unlinked.id, addedAt: now))
+
+        let data = try await MyMusicPersistenceService(repository: repository)
+            .exportPreferences(exportedAt: now)
+        let document = try MyMusicJSONCodec.decodePreferences(data)
+        let values = Dictionary(uniqueKeysWithValues: document.tracks.map { ($0.trackId, $0) })
+
+        XCTAssertEqual(Set(values.keys), [firstID, secondID])
+        XCTAssertEqual(values[firstID]?.favorite, false)
+        XCTAssertEqual(values[firstID]?.playbackPreference, -3)
+        XCTAssertEqual(values[secondID]?.favorite, true)
+        XCTAssertEqual(values[secondID]?.playbackPreference, 2)
+    }
+
+    func testPreferencesExportIncludesOnlyMacChangesAndAcknowledgesExactPreviewVersion() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let now = Date(timeIntervalSince1970: 1_000)
+        let appOnlyID = UUID(), macID = UUID()
+        let appOnly = fixture.track(relativePath: "app.flac", title: "App", artist: "A", album: "Album")
+        let mac = fixture.track(relativePath: "mac.flac", title: "Mac", artist: "A", album: "Album")
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        try await fixture.insert([appOnly, mac], into: repository)
+        try await repository.saveMyMusicTrackLinks([
+            fixture.link(home: appOnly, externalID: appOnlyID),
+            fixture.link(home: mac, externalID: macID),
+        ])
+        let service = MyMusicPersistenceService(repository: repository)
+        let fromApp = try MyMusicJSONExportService().exportPreferences([
+            MyMusicPreferenceRecord(trackID: appOnlyID, playbackPreference: 5, favorite: true),
+            MyMusicPreferenceRecord(trackID: macID, playbackPreference: 0, favorite: false),
+        ], exportedAt: now)
+        _ = try await service.importPreferences(fromApp)
+        let pendingAfterImport = try await repository.loadPendingMyMusicPreferenceExports()
+        XCTAssertTrue(pendingAfterImport.isEmpty)
+
+        try await repository.saveTrackPreference(
+            TrackPreference(trackID: mac.id, playbackPreference: 2, updatedAt: now)
+        )
+        let first = try await service.preparePreferencesExport(exportedAt: now)
+        let firstDocument = try MyMusicJSONCodec.decodePreferences(first.data)
+        XCTAssertEqual(firstDocument.tracks.map(\.trackId), [macID])
+        XCTAssertEqual(firstDocument.tracks.first?.playbackPreference, 2)
+
+        try await repository.saveTrackPreference(
+            TrackPreference(trackID: mac.id, playbackPreference: 3, updatedAt: now.addingTimeInterval(1))
+        )
+        try await service.acknowledgePreferencesExport(first.pendingChanges)
+        let second = try await service.preparePreferencesExport(exportedAt: now.addingTimeInterval(1))
+        let secondDocument = try MyMusicJSONCodec.decodePreferences(second.data)
+        XCTAssertEqual(secondDocument.tracks.map(\.trackId), [macID])
+        XCTAssertEqual(secondDocument.tracks.first?.playbackPreference, 3)
+
+        _ = try await service.importPreferences(fromApp)
+        let pendingAfterSecondImport = try await repository.loadPendingMyMusicPreferenceExports()
+        XCTAssertTrue(pendingAfterSecondImport.isEmpty)
+        let current = Dictionary(uniqueKeysWithValues: try await repository.loadCurrentMyMusicPreferenceRecords().map {
+            ($0.trackID, $0)
+        })
+        XCTAssertEqual(current[appOnlyID]?.playbackPreference, 5)
+        XCTAssertEqual(current[macID]?.playbackPreference, 0)
+    }
+
     func testPlaybackEventPersistsPlatformDeduplicatesAndReportsUnknownTrack() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

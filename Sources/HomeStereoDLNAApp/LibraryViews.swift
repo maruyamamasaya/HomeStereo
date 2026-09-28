@@ -134,7 +134,7 @@ struct LibraryView: View {
                         .padding(.vertical, 7)
                     }
                 }
-                .background(.bar)
+                .homeStereoThemeBar()
             }
             .alert("評価を保存できませんでした", isPresented: preferenceErrorPresented) {
                 Button("OK") { preferences.dismissError() }
@@ -301,6 +301,7 @@ private struct SongsTable: View {
             // AppKit can eagerly measure thousands of inserted rows when a narrow
             // filter is cleared. Replace the native table with the prepared result.
             .id(library.browserPresentationID)
+            .alternatingRowBackgrounds(.disabled)
         }
     }
 
@@ -1094,8 +1095,7 @@ struct LibraryFoldersView: View {
             }
         }
         .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(nsColor: .separatorColor).opacity(0.5)))
+        .homeStereoThemeSurface(cornerRadius: 14)
     }
 
     private func scanCard(_ progress: ScanProgress) -> some View {

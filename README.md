@@ -12,7 +12,7 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 - `HomeStereo.xcodeproj`の`HomeStereo` schemeをMy Macで実行
 - Sign to Run Locally（ad-hoc）、App Sandbox有効
 
-権限はユーザー選択ファイルのread-only、outgoing network、incoming networkだけです。生成Info.plistにはローカルネットワーク利用説明を設定しています。インターネット上へ音源や機器情報を送信しません。
+権限はユーザー選択ファイルのread/write、outgoing network、incoming networkだけです。read/writeは標準保存panelで明示選択したJSONの書き出しに必要です。音源フォルダと音源本体は実装上読み取り専用で扱います。生成Info.plistにはローカルネットワーク利用説明を設定しています。インターネット上へ音源や機器情報を送信しません。
 
 標準検証:
 
@@ -29,7 +29,7 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 5. 「フォルダ」で音楽フォルダを登録してscanするか、「再生中」で音源を1つ選択します。
 6. 「ライブラリ」で曲を選び、再生を押します。`⌘O`でフォルダ登録、`⇧⌘O`で単曲選択、`⌘F`で検索、Spaceで再生／一時停止できます。
 
-外観はアプリの「設定」またはメニューバーの「表示」→「テーマ」から変更できます。システム外観のほか、シンプルダーク、Living Aurora、Pulse Neon、Blue Cosmosを選べます。
+外観はアプリの「設定」またはメニューバーの「表示」→「テーマ」から変更できます。システム外観のほか、シンプルダーク、Living Aurora、Pulse Neon、Blue Cosmosを選べます。各テーマでは、曲一覧を含む全画面をテーマ色の背景と半透明の操作面で表示します。
 
 再生時だけ、Rendererへ到達するMacのLANアドレスへ小さなHTTP serverをbindします。URLはopaque UUIDと一時tokenを含み、選択した1ファイルだけを`GET`／`HEAD`／byte Rangeで配信します。ファイル変更、Renderer変更、window終了で旧serverとURLを無効化します。
 
@@ -52,7 +52,7 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 - 通常／作業用を分離したローカルPlaylistの作成／名称変更／削除、曲順編集、通常／Shuffle再生
 - 曲／Album／Artist／現在QueueからのPlaylist追加、missing曲の参照保持
 - M3U8 Import／Export（曖昧な相対pathは自動接続しない）
-- MyMusicを正本とするCanonical Track IDとPlaylist JSONのPreview付きImport／Export
+- MyMusicを正本とするCanonical Track IDとPlaylist JSONのPreview付きImport／Export。PreferencesはMyMusicからMacへ反映後、Macで変更したFavorite／Good／Badの曲だけを対象一覧で確認して差分書き出し
 - Favorite登録／解除と通常／Shuffle再生
 - 実再生時間、完走／途中停止をTrack IDで保持する再生履歴、最近／頻繁／未再生一覧
 - media key／MPRemoteCommandCenterによる既存Queue操作、Now Playing同期
@@ -91,7 +91,7 @@ View → `RendererPlaybackStore` → protocol化したService → `HomeStereoKit
 | Unit Test | 63件成功、失敗0＋20,000曲性能test成功 |
 | macOS Debug build | 成功 |
 | Sign to Run Locally | 成功 |
-| 署名済みentitlement | sandbox、user-selected read-only、network client/serverを確認 |
+| 署名済みentitlement | sandbox、user-selected read/write、network client/serverを確認 |
 | SRS-HG1単体への旧CLI再生 | 過去にR側／MP3で成功。詳細は[`docs/dlna-playback.md`](docs/dlna-playback.md) |
 | 新macOS Appでの探索・再生 | 未検証 |
 | Wireless StereoのL/R両方 | 未検証 |

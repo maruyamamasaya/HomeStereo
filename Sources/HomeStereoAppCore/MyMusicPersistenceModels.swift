@@ -147,6 +147,28 @@ public struct MyMusicPreferencesPersistenceResult: Equatable, Sendable {
     public let unresolvedTrackIDs: [UUID]
 }
 
+public struct PendingMyMusicPreferenceExport: Equatable, Sendable {
+    public let homeStereoTrackID: Track.ID
+    public let changeToken: UUID
+    public let record: MyMusicPreferenceRecord
+
+    public init(homeStereoTrackID: Track.ID, changeToken: UUID, record: MyMusicPreferenceRecord) {
+        self.homeStereoTrackID = homeStereoTrackID
+        self.changeToken = changeToken
+        self.record = record
+    }
+}
+
+public struct MyMusicPreferencesExportResult: Equatable, Sendable {
+    public let data: Data
+    public let pendingChanges: [PendingMyMusicPreferenceExport]
+
+    public init(data: Data, pendingChanges: [PendingMyMusicPreferenceExport]) {
+        self.data = data
+        self.pendingChanges = pendingChanges
+    }
+}
+
 public struct MyMusicPlaybackEventsPersistenceResult: Equatable, Sendable {
     public let inserted: Int
     public let duplicates: Int
@@ -165,6 +187,11 @@ public protocol MyMusicPersisting: Sendable {
         _ preferences: [MyMusicPreferenceRecord], exportedAt: Date
     ) async throws -> MyMusicPreferencesPersistenceResult
     func loadMyMusicPreferences() async throws -> [PersistedMyMusicPreference]
+    func loadCurrentMyMusicPreferenceRecords() async throws -> [MyMusicPreferenceRecord]
+    func loadPendingMyMusicPreferenceExports() async throws -> [PendingMyMusicPreferenceExport]
+    func acknowledgeMyMusicPreferenceExports(
+        _ pendingChanges: [PendingMyMusicPreferenceExport]
+    ) async throws
     func appendMyMusicPlaybackEvents(
         _ events: [MyMusicPlaybackEventRecord]
     ) async throws -> MyMusicPlaybackEventsPersistenceResult

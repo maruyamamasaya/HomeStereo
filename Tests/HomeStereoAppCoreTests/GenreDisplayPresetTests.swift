@@ -51,6 +51,6 @@ final class GenreDisplayPresetTests: XCTestCase {
         let secondLoad = try await repository.loadGenreDisplayPresets()
         let schemaVersion = try await repository.schemaVersion()
         XCTAssertEqual(secondLoad, presets)
-        XCTAssertEqual(schemaVersion, 13)
+        XCTAssertEqual(schemaVersion, SQLiteLibraryRepository.currentSchemaVersion)
     }
 }

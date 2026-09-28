@@ -27,7 +27,7 @@ SwiftUI View
 
 main Window、MenuBarExtra、小型player Window、Queue Inspectorは同じStore instanceを参照し、別の再生状態を持たない。Queue曲、直接選択ファイル、Renderer polling結果は`QueueStore.nowPlaying`の`NowPlayingPresentation`へ集約し、画面と`MPNowPlayingInfoCenter`は同じ曲情報・状態・操作可否を使う。window frameはAppKit autosave、SidebarはSceneStorage、InspectorはAppStorageで復元する。drag payloadはTrack UUIDだけを含み、音源pathやfile dataを渡さない。
 
-テーマは`HomeStereoTheme`が安定した保存IDと表示tokenを所有し、`appearance.theme`へ端末内保存する。Living Aurora／Pulse Neon／Blue Cosmosのtokenと世界観は、GitHub `maruyamamasaya/living-aurora-ui` commit `7138d4a5f8578cc1991c6a3add76fef30c11e345`の`docs/DESIGN_SYSTEM.md`と`src/styles/themes.css`を正本とする。`HomeStereoThemeRoot`がmain Window、Mini Player、MenuBarExtra、Settingsへ同じcolor scheme／tint／静的背景を注入する。テーマ変更で再生Storeやnavigation identityを作り直さず、音源、SQLite、MyMusic JSON、Backup契約には含めない。既定の`system`は従来のmacOS外観を維持し、暗色4テーマだけdark schemeを指定する。Web固有のpointer反応や常時animationは移植せず、Reduce Transparencyまたはincreased contrastでは不透明なbaseだけにする。
+テーマは`HomeStereoTheme`が安定した保存IDと表示tokenを所有し、`appearance.theme`へ端末内保存する。Living Aurora／Pulse Neon／Blue Cosmosのtokenと世界観は、GitHub `maruyamamasaya/living-aurora-ui` commit `7138d4a5f8578cc1991c6a3add76fef30c11e345`の`docs/DESIGN_SYSTEM.md`と`src/styles/themes.css`を正本とする。`HomeStereoThemeRoot`がmain Window、Mini Player、MenuBarExtra、Settingsへ同じcolor scheme／tint／静的背景を注入し、`homeStereoThemeScreen`、`homeStereoThemeSidebar`、`homeStereoThemeBar`、`homeStereoThemeSurface`が各画面の半透明surfaceを共通化する。テーマ変更で再生Storeやnavigation identityを作り直さず、音源、SQLite、MyMusic JSON、Backup契約には含めない。既定の`system`は従来のmacOS外観を維持し、暗色4テーマだけdark schemeを指定する。Web固有のpointer反応や常時animationは移植せず、Reduce Transparencyまたはincreased contrastでは不透明なbaseだけにする。
 
 ## Targets
 
@@ -55,7 +55,7 @@ SQLite schema v12はローカル分析用の詳細再生event、Track／日別�
 
 SQLite schema v13はジャンル表示プリセットの編集済み正本と配列順を`genre_display_presets`へ保存する。`GenreDisplayPresetStore`がCRUD、並べ替え、同名merge Import、version 1 JSON Exportを担当し、`LibraryStore`は選択されたプリセットを`LibraryBrowserIndex`の複数ジャンルfilterへ渡す。Mac AnalyticsやiPhoneのApplication Supportへ直接書き込まず、`mymusic.genre-display-presets` JSONだけを交換境界とする。
 
-iPhone版MyMusicとの連携は、曲一覧、Playlist、Preferences、Playback Eventsを別々のversion付きJSON文書として扱う。`HomeStereoAppCore`内でCodable DTO、JSON非依存の交換model、Import／Export serviceを分離し、decode後に文書全体を検証してから交換modelへ変換する。Libraryの`relativePath`は両端末で選択した共通音楽ルート以下だけを表し、端末固有の絶対pathを含めない。保存済みMyMusic ID、NFCかつcase-sensitiveなrelative path＋size／duration、fingerprint、一意metadataの順に既存曲へMyMusic IDを関連付け、HomeStereoのTrack主キーは変更・再生成しない。SQLite schema v10は既存Track／Playlist主キーを維持したままCanonical Track ID、snapshot在籍状態、Canonical Playlist ID、Preferences、互換Playback Eventsを保存する。Playlist JSONはCanonical Track ID完全一致だけで曲を解決し、単一transactionで追加／更新する。Playlistの`kind`は`regular`／`work`を維持し、UIとローカル追加先を分離する。作業用曲の分類は再生時間ではなくgenreの「作業用BGM」だけを使う。Import commit後は文書種別に応じて表示用Storeを再読込し、`MyMusicStatusStore`は全HomeStereo曲をlink、Preferences、Events、MyMusic Playlistと読み取り専用で結合して適用状況を表示する。詳細は[`docs/mymusic-json-interchange.md`](docs/mymusic-json-interchange.md)を正本とする。
+iPhone版MyMusicとの連携は、曲一覧、Playlist、Preferences、Playback Eventsを別々のversion付きJSON文書として扱う。`HomeStereoAppCore`内でCodable DTO、JSON非依存の交換model、Import／Export serviceを分離し、decode後に文書全体を検証してから交換modelへ変換する。Libraryの`relativePath`は両端末で選択した共通音楽ルート以下だけを表し、端末固有の絶対pathを含めない。保存済みMyMusic ID、NFCかつcase-sensitiveなrelative path＋size／duration、fingerprint、一意metadataの順に既存曲へMyMusic IDを関連付け、HomeStereoのTrack主キーは変更・再生成しない。SQLite schema v10は既存Track／Playlist主キーを維持したままCanonical Track ID、snapshot在籍状態、Canonical Playlist ID、Preferences、互換Playback Eventsを保存する。schema v14の`mymusic_preference_export_changes`はMacで変更した曲と世代tokenだけを保持し、Preferences Importで該当曲をMyMusic値へ揃えてdirtyを解除する。Preferences Exportはdirty曲だけを既存schema v2でPreviewし、ファイル保存成功後にPreview時点と一致するtokenだけを解除するため、Preview後の再編集を失わない。Playlist JSONはCanonical Track ID完全一致だけで曲を解決し、単一transactionで追加／更新する。Playlistの`kind`は`regular`／`work`を維持し、UIとローカル追加先を分離する。作業用曲の分類は再生時間ではなくgenreの「作業用BGM」だけを使う。Import commit後は文書種別に応じて表示用Storeを再読込し、`MyMusicStatusStore`は全HomeStereo曲をlink、Preferences、Events、MyMusic Playlistと読み取り専用で結合して適用状況を表示する。詳細は[`docs/mymusic-json-interchange.md`](docs/mymusic-json-interchange.md)を正本とする。
 
 ## Protocols
 
@@ -64,7 +64,7 @@ iPhone版MyMusicとの連携は、曲一覧、Playlist、Preferences、Playback 
 - Media: `GET|HEAD /tracks/<UUID>?token=<token>`、単一byte Range
 - Control: SOAP AVTransport／RenderingControl
 
-外部package依存はない。App Sandboxはfile read-only、network client/serverを許可する。
+外部package依存はない。App Sandboxはユーザー選択fileのread/writeとnetwork client/serverを許可する。write権限は標準保存panelで明示選択したJSON出力に使い、音源folder／音源本体は実装上読み取り専用として変更・削除しない。
 
 sleep／wakeとnetwork path通知は`SystemEventMonitoring`境界に隔離する。復帰時はQueueと履歴を保存したまま、network復帰後に有限の指数backoffでSSDP再検索し、UDNで同一Rendererを選んで実状態を取得する。自動再生・自動音量変更は行わない。
 

@@ -82,7 +82,7 @@ LEFT ONLY／RIGHT ONLY確認後は、Web UIの安全確認checkboxを入れて`P
 ## Permissions
 
 - App Sandbox
-- User Selected File: Read Only
+- User Selected File: Read/Write（標準保存panelのJSON書き出し用。音源は実装上読み取り専用）
 - Outgoing Connections (Client)
 - Incoming Connections (Server)
 - `NSLocalNetworkUsageDescription`

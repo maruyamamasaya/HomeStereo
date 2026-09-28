@@ -8,7 +8,7 @@ Keywords: `HomeStereoDLNAApp`, `DLNAContentView`, `DevicesView`, `PlaybackView`,
 ## Theme and Appearance
 
 Primary: `Sources/HomeStereoDLNAApp/HomeStereoTheme.swift`, `HomeStereoDLNAApp.swift`
-Keywords: `HomeStereoTheme`, `HomeStereoThemeRoot`, `HomeStereoThemeSettingsView`, `appearance.theme`, `CommandMenu("表示")`
+Keywords: `HomeStereoTheme`, `HomeStereoThemeRoot`, `HomeStereoThemeSettingsView`, `homeStereoThemeScreen`, `homeStereoThemeSidebar`, `homeStereoThemeBar`, `homeStereoThemeSurface`, `appearance.theme`, `CommandMenu("表示")`
 
 ## State and Services
 

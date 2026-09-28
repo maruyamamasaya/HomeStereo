@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting, AnalyticsPersisting, TrackPreferencePersisting, GenreDisplayPresetPersisting, @unchecked Sendable {
-    public static let currentSchemaVersion = 13
+    public static let currentSchemaVersion = 14
     private let lock = NSRecursiveLock()
     private var database: OpaquePointer?
 
@@ -332,18 +332,40 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
 
     public func saveFavorite(_ favorite: Favorite) async throws {
         try withLock {
-            try update("INSERT OR IGNORE INTO favorites(track_id, added_at) VALUES(?, ?)") {
-                bind(favorite.trackID.uuidString, to: $0, at: 1)
-                bind(favorite.addedAt.timeIntervalSince1970, to: $0, at: 2)
-            }
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try update("INSERT OR IGNORE INTO favorites(track_id, added_at) VALUES(?, ?)") {
+                    bind(favorite.trackID.uuidString, to: $0, at: 1)
+                    bind(favorite.addedAt.timeIntervalSince1970, to: $0, at: 2)
+                }
+                try markMyMusicPreferenceChangedStatement(trackID: favorite.trackID)
+                try execute("COMMIT")
+            } catch { try? execute("ROLLBACK"); throw error }
         }
     }
 
     public func deleteFavorite(trackID: Track.ID) async throws {
-        try withLock { try update("DELETE FROM favorites WHERE track_id = ?") { bind(trackID.uuidString, to: $0, at: 1) } }
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try update("DELETE FROM favorites WHERE track_id = ?") { bind(trackID.uuidString, to: $0, at: 1) }
+                try markMyMusicPreferenceChangedStatement(trackID: trackID)
+                try execute("COMMIT")
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
     }
 
-    public func deleteAllFavorites() async throws { try withLock { try execute("DELETE FROM favorites") } }
+    public func deleteAllFavorites() async throws {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let trackIDs = try query("SELECT track_id FROM favorites") { UUID(uuidString: text($0, 0))! }
+                try execute("DELETE FROM favorites")
+                for trackID in trackIDs { try markMyMusicPreferenceChangedStatement(trackID: trackID) }
+                try execute("COMMIT")
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
+    }
 
     public func loadPlaybackEvents() async throws -> [PlaybackEvent] {
         try withLock {
@@ -381,6 +403,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
                     try update("INSERT OR IGNORE INTO favorites(track_id, added_at) VALUES(?, ?)") {
                         bind(favorite.trackID.uuidString, to: $0, at: 1); bind(favorite.addedAt.timeIntervalSince1970, to: $0, at: 2)
                     }
+                    try markMyMusicPreferenceChangedStatement(trackID: favorite.trackID)
                 }
                 for event in events {
                     try update("INSERT OR IGNORE INTO playback_events(id, track_id, started_at, played_seconds, outcome) VALUES(?, ?, ?, ?, ?)") {
@@ -477,14 +500,24 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
                 let existing = Dictionary(uniqueKeysWithValues: try query(
                     "SELECT mymusic_track_id, playback_preference, favorite FROM mymusic_preferences"
                 ) { (UUID(uuidString: text($0, 0))!, (Int(sqlite3_column_int64($0, 1)), sqlite3_column_int($0, 2) != 0)) })
+                let localPlaybackPreferences = Dictionary(uniqueKeysWithValues: try query(
+                    "SELECT home_track_id, playback_preference FROM track_preferences"
+                ) { (UUID(uuidString: text($0, 0))!, Int(sqlite3_column_int64($0, 1))) })
                 var favoriteIDs = Set(try query("SELECT track_id FROM favorites") { UUID(uuidString: text($0, 0))! })
                 var updated = 0, unchanged = 0
                 var unresolved: [UUID] = []
                 for preference in preferences {
                     guard let homeID = links[preference.trackID] else { unresolved.append(preference.trackID); continue }
+                    try update("DELETE FROM mymusic_preference_export_changes WHERE home_track_id = ?") {
+                        bind(homeID.uuidString, to: $0, at: 1)
+                    }
                     let favoriteIsCurrent = favoriteIDs.contains(homeID) == preference.favorite
+                    let playbackPreferenceIsCurrent = (
+                        localPlaybackPreferences[homeID] ?? existing[preference.trackID]?.0 ?? 0
+                    ) == preference.playbackPreference
                     if existing[preference.trackID]?.0 == preference.playbackPreference,
-                       existing[preference.trackID]?.1 == preference.favorite, favoriteIsCurrent {
+                       existing[preference.trackID]?.1 == preference.favorite,
+                       playbackPreferenceIsCurrent, favoriteIsCurrent {
                         unchanged += 1; continue
                     }
                     try update("""
@@ -541,6 +574,73 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
                     exportedAt: date($0, 4)
                 )
             }
+        }
+    }
+
+    public func loadCurrentMyMusicPreferenceRecords() async throws -> [MyMusicPreferenceRecord] {
+        try withLock {
+            try query("""
+                SELECT l.mymusic_track_id,
+                       COALESCE(tp.playback_preference, p.playback_preference, 0),
+                       CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END
+                FROM mymusic_track_links l
+                LEFT JOIN track_preferences tp ON tp.home_track_id = l.home_track_id
+                LEFT JOIN favorites f ON f.track_id = l.home_track_id
+                LEFT JOIN mymusic_preferences p ON p.home_track_id = l.home_track_id
+                ORDER BY l.mymusic_track_id
+                """) {
+                MyMusicPreferenceRecord(
+                    trackID: UUID(uuidString: text($0, 0))!,
+                    playbackPreference: Int(sqlite3_column_int64($0, 1)),
+                    favorite: sqlite3_column_int($0, 2) != 0
+                )
+            }
+        }
+    }
+
+    public func loadPendingMyMusicPreferenceExports() async throws -> [PendingMyMusicPreferenceExport] {
+        try withLock {
+            try query("""
+                SELECT l.home_track_id, c.change_token, l.mymusic_track_id,
+                       COALESCE(tp.playback_preference, p.playback_preference, 0),
+                       CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END
+                FROM mymusic_preference_export_changes c
+                JOIN mymusic_track_links l ON l.home_track_id = c.home_track_id
+                LEFT JOIN track_preferences tp ON tp.home_track_id = l.home_track_id
+                LEFT JOIN favorites f ON f.track_id = l.home_track_id
+                LEFT JOIN mymusic_preferences p ON p.home_track_id = l.home_track_id
+                ORDER BY c.changed_at, l.mymusic_track_id
+                """) {
+                PendingMyMusicPreferenceExport(
+                    homeStereoTrackID: UUID(uuidString: text($0, 0))!,
+                    changeToken: UUID(uuidString: text($0, 1))!,
+                    record: MyMusicPreferenceRecord(
+                        trackID: UUID(uuidString: text($0, 2))!,
+                        playbackPreference: Int(sqlite3_column_int64($0, 3)),
+                        favorite: sqlite3_column_int($0, 4) != 0
+                    )
+                )
+            }
+        }
+    }
+
+    public func acknowledgeMyMusicPreferenceExports(
+        _ pendingChanges: [PendingMyMusicPreferenceExport]
+    ) async throws {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                for change in pendingChanges {
+                    try update("""
+                        DELETE FROM mymusic_preference_export_changes
+                        WHERE home_track_id = ? AND change_token = ?
+                        """) {
+                        bind(change.homeStereoTrackID.uuidString, to: $0, at: 1)
+                        bind(change.changeToken.uuidString, to: $0, at: 2)
+                    }
+                }
+                try execute("COMMIT")
+            } catch { try? execute("ROLLBACK"); throw error }
         }
     }
 
@@ -698,16 +798,21 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
 
     public func saveTrackPreference(_ preference: TrackPreference) async throws {
         try withLock {
-            try update("""
-                INSERT INTO track_preferences(home_track_id, playback_preference, updated_at)
-                VALUES(?, ?, ?)
-                ON CONFLICT(home_track_id) DO UPDATE SET
-                    playback_preference=excluded.playback_preference, updated_at=excluded.updated_at
-                """) {
-                bind(preference.trackID.uuidString, to: $0, at: 1)
-                bind(preference.playbackPreference, to: $0, at: 2)
-                bind(preference.updatedAt.timeIntervalSince1970, to: $0, at: 3)
-            }
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try update("""
+                    INSERT INTO track_preferences(home_track_id, playback_preference, updated_at)
+                    VALUES(?, ?, ?)
+                    ON CONFLICT(home_track_id) DO UPDATE SET
+                        playback_preference=excluded.playback_preference, updated_at=excluded.updated_at
+                    """) {
+                    bind(preference.trackID.uuidString, to: $0, at: 1)
+                    bind(preference.playbackPreference, to: $0, at: 2)
+                    bind(preference.updatedAt.timeIntervalSince1970, to: $0, at: 3)
+                }
+                try markMyMusicPreferenceChangedStatement(trackID: preference.trackID)
+                try execute("COMMIT")
+            } catch { try? execute("ROLLBACK"); throw error }
         }
     }
 
@@ -1016,6 +1121,19 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
         return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 
+    private func markMyMusicPreferenceChangedStatement(trackID: Track.ID) throws {
+        try update("""
+            INSERT INTO mymusic_preference_export_changes(home_track_id, change_token, changed_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(home_track_id) DO UPDATE SET
+                change_token=excluded.change_token, changed_at=excluded.changed_at
+            """) {
+            bind(trackID.uuidString, to: $0, at: 1)
+            bind(UUID().uuidString, to: $0, at: 2)
+            bind(Date.now.timeIntervalSince1970, to: $0, at: 3)
+        }
+    }
+
     private func migrate() throws {
         let startingSchemaVersion = Int(try scalarInt("PRAGMA user_version"))
         try execute("BEGIN IMMEDIATE TRANSACTION")
@@ -1098,6 +1216,10 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
             home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
             playback_preference INTEGER NOT NULL CHECK(playback_preference BETWEEN -10 AND 10),
             updated_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mymusic_preference_export_changes(
+            home_track_id TEXT PRIMARY KEY,
+            change_token TEXT NOT NULL, changed_at REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS playback_track_summaries(
             home_track_id TEXT PRIMARY KEY,

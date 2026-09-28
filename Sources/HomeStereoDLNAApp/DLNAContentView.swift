@@ -67,39 +67,43 @@ struct DLNAContentView: View {
                     }
                 }
                 .listStyle(.sidebar)
+                .homeStereoThemeSidebar()
                 .navigationTitle("HomeStereo")
                 .navigationSplitViewColumnWidth(min: 165, ideal: 185)
             } detail: {
-                switch store.destination {
-                case .devices: DevicesView(store: store, recovery: recovery) { store.destination = .songs }
-                case .songs: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .songs)
-                case .albums: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .albums)
-                case .artists: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .artists)
-                case .folders: LibraryFoldersView(library: library)
-                case .queue: QueueView(playback: store, queue: queue, library: library)
-                case .playlists:
-                    PlaylistsView(playback: store, store: playlists, queue: queue, library: library, kind: .regular)
-                case .workPlaylists:
-                    PlaylistsView(playback: store, store: playlists, queue: queue, library: library, kind: .work)
-                case .favorites:
-                    ListeningView(
-                        playback: store, store: listening, queue: queue,
-                        library: library, playlists: playlists, mode: .favorites
-                    )
-                case .history:
-                    ListeningView(
-                        playback: store, store: listening, queue: queue,
-                        library: library, playlists: playlists, mode: .history
-                    )
-                case .analytics:
-                    AnalyticsView(playback: store, queue: queue, library: library, store: analytics)
-                case .genrePresets: GenreDisplayPresetsView(store: genrePresets, library: library)
-                case .backup: BackupView(store: backup)
-                case .myMusic: MyMusicTransferView(store: myMusic)
-                case .myMusicStatus: MyMusicStatusView(store: myMusicStatus)
-                case .developer: MyMusicJSONEditorView(store: developer)
-                case .playback: PlaybackView(store: store, queue: queue, library: library)
+                Group {
+                    switch store.destination {
+                    case .devices: DevicesView(store: store, recovery: recovery) { store.destination = .songs }
+                    case .songs: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .songs)
+                    case .albums: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .albums)
+                    case .artists: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .artists)
+                    case .folders: LibraryFoldersView(library: library)
+                    case .queue: QueueView(playback: store, queue: queue, library: library)
+                    case .playlists:
+                        PlaylistsView(playback: store, store: playlists, queue: queue, library: library, kind: .regular)
+                    case .workPlaylists:
+                        PlaylistsView(playback: store, store: playlists, queue: queue, library: library, kind: .work)
+                    case .favorites:
+                        ListeningView(
+                            playback: store, store: listening, queue: queue,
+                            library: library, playlists: playlists, mode: .favorites
+                        )
+                    case .history:
+                        ListeningView(
+                            playback: store, store: listening, queue: queue,
+                            library: library, playlists: playlists, mode: .history
+                        )
+                    case .analytics:
+                        AnalyticsView(playback: store, queue: queue, library: library, store: analytics)
+                    case .genrePresets: GenreDisplayPresetsView(store: genrePresets, library: library)
+                    case .backup: BackupView(store: backup)
+                    case .myMusic: MyMusicTransferView(store: myMusic)
+                    case .myMusicStatus: MyMusicStatusView(store: myMusicStatus)
+                    case .developer: MyMusicJSONEditorView(store: developer)
+                    case .playback: PlaybackView(store: store, queue: queue, library: library)
+                    }
                 }
+                .homeStereoThemeScreen()
             }
 
             Divider()
@@ -118,11 +122,12 @@ struct DLNAContentView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(.bar)
+                .homeStereoThemeBar()
             }
             }
             .inspector(isPresented: inspectorPresentation) {
                 QueueView(playback: store, queue: queue, library: library)
+                    .homeStereoThemeScreen()
                     .inspectorColumnWidth(min: 260, ideal: 340, max: 480)
             }
             .toolbar {
@@ -606,7 +611,7 @@ private struct DevicesView: View {
                 }
             }
             .padding(12)
-            .background(.bar)
+            .homeStereoThemeBar()
             Divider()
             if let pair = store.sonyStereoPair {
                 VStack(alignment: .leading, spacing: 10) {
@@ -790,7 +795,7 @@ private struct DevicesView: View {
                     Text("\(store.devices.count)台")
                 }
                 .font(.caption).foregroundStyle(.secondary)
-                .padding(.horizontal, 12).padding(.vertical, 6).background(.bar)
+                .padding(.horizontal, 12).padding(.vertical, 6).homeStereoThemeBar()
             }
         }
     }

@@ -6,7 +6,7 @@ import HomeStereoAppCore
 import Observation
 
 public enum MyMusicTransferState: String, Equatable, Sendable {
-    case idle, reading, validating, preview, applying, exporting, completed, failed
+    case idle, reading, validating, preview, exportPreview, applying, exporting, completed, failed
 }
 
 public struct MyMusicExportResult: Equatable, Sendable {
@@ -16,6 +16,7 @@ public struct MyMusicExportResult: Equatable, Sendable {
     public let unresolvedEvents: Int?
     public let totalPlaylistTracks: Int?
     public let conflictedPlaylistTracks: Int?
+    public let playbackEventsRange: Range<Date>?
 
     public var hasUnresolvedEventWarning: Bool { (unresolvedEvents ?? 0) > 0 }
 }
@@ -104,12 +105,12 @@ public final class MyMusicStatusStore {
         defer { isLoading = false }
         do {
             let context = try await repository.loadMyMusicPlaylistContext()
-            let preferences = try await repository.loadMyMusicPreferences()
+            let preferences = try await repository.loadCurrentMyMusicPreferenceRecords()
             let events = try await repository.loadMyMusicPlaybackEvents()
             let playCounts = try await repository.loadMyMusicPlayCounts()
             myMusicPlaylistCount = context.playlists.count { $0.myMusicPlaylistID != nil }
             let linksByHomeID = Dictionary(uniqueKeysWithValues: context.links.map { ($0.homeStereoTrackID, $0) })
-            let preferencesByHomeID = Dictionary(uniqueKeysWithValues: preferences.map { ($0.homeStereoTrackID, $0) })
+            let preferencesByMyMusicID = Dictionary(uniqueKeysWithValues: preferences.map { ($0.trackID, $0) })
             let playCountsByHomeID = Dictionary(uniqueKeysWithValues: playCounts.compactMap {
                 value in value.homeStereoTrackID.map { ($0, value.playCount) }
             })
@@ -122,7 +123,7 @@ public final class MyMusicStatusStore {
             }
             rows = context.tracks.map { track in
                 let link = linksByHomeID[track.id]
-                let preference = preferencesByHomeID[track.id]
+                let preference = link.flatMap { preferencesByMyMusicID[$0.myMusicTrackID] }
                 return MyMusicTrackApplicationRow(
                     id: track.id, title: track.title, artist: track.artist ?? "",
                     album: track.album ?? "", relativePath: track.relativePath,
@@ -157,6 +158,7 @@ public final class MyMusicStatusStore {
 public final class MyMusicTransferStore {
     public private(set) var state: MyMusicTransferState = .idle
     public private(set) var preview: MyMusicImportPreview?
+    public private(set) var preferencesExportPreview: MyMusicPreparedPreferencesExport?
     public private(set) var exportResult: MyMusicExportResult?
     public private(set) var completedMessage: String?
     public private(set) var errorMessage: String?
@@ -181,12 +183,13 @@ public final class MyMusicTransferStore {
     }
 
     public func selectImport(_ kind: MyMusicDocumentKind) async {
-        guard canStart else { return }
+        guard !isBusy else { return }
         guard let url = files.chooseImportURL() else { return }
         guard url.pathExtension.lowercased() == "json" else {
             fail("JSONファイル（.json）を選択してください。")
             return
         }
+        discardPendingImport()
         state = .reading; clearOutput()
         do {
             let data = try files.read(from: url)
@@ -223,12 +226,58 @@ public final class MyMusicTransferStore {
         pendingData = nil; pendingKind = nil; preview = nil; state = .idle
     }
 
-    public func export(_ kind: MyMusicDocumentKind) async {
-        guard canStart else { return }
+    public func preparePreferencesExport() async {
+        guard !isBusy else { return }
+        discardPendingImport()
+        clearOutput()
+        state = .validating
+        do {
+            preferencesExportPreview = try await transfer.preparePreferencesExport()
+            state = .exportPreview
+        } catch { fail(Self.userMessage(for: error, phase: .exporting)) }
+    }
+
+    public func confirmPreferencesExport() async {
+        guard state == .exportPreview, let prepared = preferencesExportPreview else { return }
+        guard let url = files.chooseExportURL(defaultFileName: MyMusicDocumentKind.preferences.fileName) else { return }
+        state = .exporting
+        errorMessage = nil
+        do { try files.write(prepared.data, to: url) }
+        catch {
+            fail("保存先へ書き込めませんでした。保存先のアクセス権や空き容量を確認してください。\n\(error.localizedDescription)")
+            return
+        }
+        do { try await transfer.acknowledgePreferencesExport(prepared.pendingChanges) }
+        catch {
+            fail("JSONは保存しましたが、送信済み状態を更新できませんでした。次回も同じ曲が書き出される可能性があります。\n\(error.localizedDescription)")
+            return
+        }
+        preferencesExportPreview = nil
+        exportResult = MyMusicExportResult(
+            kind: .preferences, destination: url.path,
+            exportedEvents: prepared.pendingChanges.count, unresolvedEvents: nil,
+            totalPlaylistTracks: nil, conflictedPlaylistTracks: nil,
+            playbackEventsRange: nil
+        )
+        completedMessage = "\(MyMusicDocumentKind.preferences.fileName)へMacで変更した\(prepared.pendingChanges.count)曲を書き出しました。"
+        state = .completed
+    }
+
+    public func cancelPreferencesExport() {
+        guard state == .exportPreview else { return }
+        preferencesExportPreview = nil
+        state = .idle
+    }
+
+    public func export(
+        _ kind: MyMusicDocumentKind, playbackEventsRange: Range<Date>? = nil
+    ) async {
+        guard !isBusy else { return }
         guard let url = files.chooseExportURL(defaultFileName: kind.fileName) else { return }
+        discardPendingImport()
         state = .exporting; clearOutput()
         do {
-            let value = try await transfer.export(kind)
+            let value = try await transfer.export(kind, playbackEventsRange: playbackEventsRange)
             do { try files.write(value.data, to: url) }
             catch {
                 fail("保存先へ書き込めませんでした。保存先のアクセス権や空き容量を確認してください。\n\(error.localizedDescription)")
@@ -237,7 +286,8 @@ public final class MyMusicTransferStore {
             exportResult = MyMusicExportResult(
                 kind: kind, destination: url.path,
                 exportedEvents: value.exported, unresolvedEvents: value.unresolved,
-                totalPlaylistTracks: value.total, conflictedPlaylistTracks: value.conflicts
+                totalPlaylistTracks: value.total, conflictedPlaylistTracks: value.conflicts,
+                playbackEventsRange: kind == .playbackEvents ? playbackEventsRange : nil
             )
             completedMessage = "\(kind.fileName)を書き出しました。"
             state = .completed
@@ -252,11 +302,16 @@ public final class MyMusicTransferStore {
     private var canStart: Bool { !isBusy && state != .preview }
 
     private func clearOutput() {
-        preview = nil; exportResult = nil; completedMessage = nil; errorMessage = nil
+        preview = nil; preferencesExportPreview = nil
+        exportResult = nil; completedMessage = nil; errorMessage = nil
+    }
+
+    private func discardPendingImport() {
+        pendingData = nil; pendingKind = nil; preview = nil
     }
 
     private func fail(_ message: String) {
-        pendingData = nil; pendingKind = nil; preview = nil
+        pendingData = nil; pendingKind = nil; preview = nil; preferencesExportPreview = nil
         errorMessage = message; state = .failed
     }
 

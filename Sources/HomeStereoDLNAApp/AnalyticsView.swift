@@ -44,7 +44,7 @@ struct AnalyticsView: View {
                     Spacer()
                     Button("閉じる") { store.dismissError() }
                 }
-                .font(.caption).padding(10).background(.bar)
+                .font(.caption).padding(10).homeStereoThemeBar()
             }
         }
         .confirmationDialog(

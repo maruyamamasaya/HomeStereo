@@ -175,21 +175,40 @@ public struct MyMusicPersistenceService: Sendable {
     }
 
     public func exportPreferences(exportedAt: Date) async throws -> Data {
-        let values = try await repository.loadMyMusicPreferences().map {
-            MyMusicPreferenceRecord(
-                trackID: $0.myMusicTrackID, playbackPreference: $0.playbackPreference, favorite: $0.favorite
-            )
-        }
-        return try MyMusicJSONExportService().exportPreferences(values, exportedAt: exportedAt)
+        try await preparePreferencesExport(exportedAt: exportedAt).data
     }
 
-    public func exportPlaybackEvents(exportedAt: Date) async throws -> Data {
-        try await exportPlaybackEventsWithReport(exportedAt: exportedAt).data
+    public func preparePreferencesExport(exportedAt: Date) async throws -> MyMusicPreferencesExportResult {
+        let pendingChanges = try await repository.loadPendingMyMusicPreferenceExports()
+        return MyMusicPreferencesExportResult(
+            data: try MyMusicJSONExportService().exportPreferences(
+                pendingChanges.map(\.record), exportedAt: exportedAt
+            ),
+            pendingChanges: pendingChanges
+        )
     }
 
-    public func exportPlaybackEventsWithReport(exportedAt: Date) async throws -> MyMusicPlaybackEventsExportResult {
-        let persisted = try await repository.loadMyMusicPlaybackEvents()
-        let records = try await repository.loadMyMusicPlaybackEventRecords()
+    public func acknowledgePreferencesExport(
+        _ pendingChanges: [PendingMyMusicPreferenceExport]
+    ) async throws {
+        try await repository.acknowledgeMyMusicPreferenceExports(pendingChanges)
+    }
+
+    public func exportPlaybackEvents(
+        exportedAt: Date, playedAtRange: Range<Date>? = nil
+    ) async throws -> Data {
+        try await exportPlaybackEventsWithReport(
+            exportedAt: exportedAt, playedAtRange: playedAtRange
+        ).data
+    }
+
+    public func exportPlaybackEventsWithReport(
+        exportedAt: Date, playedAtRange: Range<Date>? = nil
+    ) async throws -> MyMusicPlaybackEventsExportResult {
+        let allPersisted = try await repository.loadMyMusicPlaybackEvents()
+        let allRecords = try await repository.loadMyMusicPlaybackEventRecords()
+        let persisted = allPersisted.filter { playedAtRange?.contains($0.playedAt) ?? true }
+        let records = allRecords.filter { playedAtRange?.contains($0.playedAt) ?? true }
         return MyMusicPlaybackEventsExportResult(
             data: try MyMusicJSONExportService().exportPlaybackEvents(records, exportedAt: exportedAt),
             exported: records.count, unresolved: max(0, persisted.count - records.count)

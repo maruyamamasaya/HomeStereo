@@ -8,6 +8,11 @@ import SwiftUI
 
 struct MyMusicTransferView: View {
     @Bindable var store: MyMusicTransferStore
+    @State private var limitsPlaybackEventRange = true
+    @State private var playbackEventsStartDate = Calendar.current.date(
+        byAdding: .month, value: -1, to: .now
+    ) ?? .now
+    @State private var playbackEventsEndDate = Date.now
 
     var body: some View {
         ScrollView {
@@ -22,6 +27,7 @@ struct MyMusicTransferView: View {
                 transferSection(title: "MyMusicから読み込む", importing: true)
                 transferSection(title: "MyMusic向けに書き出す", importing: false)
                 if let preview = store.preview { previewCard(preview) }
+                if let preview = store.preferencesExportPreview { preferencesExportPreviewCard(preview) }
             }
             .padding(24).frame(maxWidth: 920).frame(maxWidth: .infinity)
         }
@@ -52,12 +58,20 @@ struct MyMusicTransferView: View {
                     importing ? await store.selectImport(.playlists) : await store.export(.playlists)
                 }
                 Divider()
-                transferRow(.preferences, description: "お気に入りと再生の好み", buttonTitle: importing ? "選択…" : "保存先…") {
-                    importing ? await store.selectImport(.preferences) : await store.export(.preferences)
+                transferRow(
+                    .preferences,
+                    description: importing ? "お気に入りと再生の好み" : "Macで変更したお気に入りとGood／Badだけ",
+                    buttonTitle: importing ? "選択…" : "対象を確認…"
+                ) {
+                    importing ? await store.selectImport(.preferences) : await store.preparePreferencesExport()
                 }
                 Divider()
-                transferRow(.playbackEvents, description: "再生日時・実聴時間・完了状態", buttonTitle: importing ? "選択…" : "保存先…") {
-                    importing ? await store.selectImport(.playbackEvents) : await store.export(.playbackEvents)
+                if importing {
+                    transferRow(.playbackEvents, description: "再生日時・実聴時間・完了状態", buttonTitle: "選択…") {
+                        await store.selectImport(.playbackEvents)
+                    }
+                } else {
+                    playbackEventsExportRow
                 }
             }
         }
@@ -78,9 +92,60 @@ struct MyMusicTransferView: View {
             Button(store.isBusy ? "処理中…" : buttonTitle) {
                 Task { await action() }
             }
-            .disabled(store.isBusy || store.state == .preview)
+            .disabled(store.isBusy)
         }
         .padding(.vertical, 11)
+    }
+
+    private var playbackEventsExportRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 14) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .frame(width: 24).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(MyMusicDocumentKind.playbackEvents.fileName).font(.headline)
+                    Text("再生日時・実聴時間・完了状態").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(store.isBusy ? "処理中…" : "保存先…") {
+                    Task { await store.export(.playbackEvents, playbackEventsRange: playbackEventsRange) }
+                }
+                .disabled(store.isBusy)
+            }
+            Picker("書き出す期間", selection: $limitsPlaybackEventRange) {
+                Text("期間指定").tag(true)
+                Text("全期間").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 260)
+            if limitsPlaybackEventRange {
+                HStack(spacing: 12) {
+                    DatePicker(
+                        "開始", selection: $playbackEventsStartDate,
+                        in: ...playbackEventsEndDate, displayedComponents: .date
+                    )
+                    DatePicker(
+                        "終了", selection: $playbackEventsEndDate,
+                        in: playbackEventsStartDate..., displayedComponents: .date
+                    )
+                    Text("両日を含む").font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("保存済みの再生イベントをすべて書き出します。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 11)
+    }
+
+    private var playbackEventsRange: Range<Date>? {
+        guard limitsPlaybackEventRange else { return nil }
+        let calendar = Calendar.autoupdatingCurrent
+        let lowerBound = calendar.startOfDay(for: playbackEventsStartDate)
+        guard let upperBound = calendar.date(
+            byAdding: .day, value: 1, to: calendar.startOfDay(for: playbackEventsEndDate)
+        ) else { return nil }
+        return lowerBound..<upperBound
     }
 
     @ViewBuilder
@@ -154,6 +219,65 @@ struct MyMusicTransferView: View {
         }
     }
 
+    @ViewBuilder
+    private func preferencesExportPreviewCard(_ preview: MyMusicPreparedPreferencesExport) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("書き出し前の確認 — \(MyMusicDocumentKind.preferences.fileName)", systemImage: "doc.text.magnifyingglass")
+                    .font(.title3.bold())
+                HStack(spacing: 8) {
+                    Text("Macで変更した対象")
+                    Text("\(preview.pendingChanges.count)曲").font(.headline.monospacedDigit())
+                }
+                Text("MyMusicから読み込んだだけの曲や、Macで変更していない曲は含みません。")
+                    .font(.caption).foregroundStyle(.secondary)
+                if preview.items.isEmpty {
+                    ContentUnavailableView(
+                        "未送信の変更はありません", systemImage: "checkmark.circle",
+                        description: Text("Macでお気に入りまたはGood／Badを変更すると対象になります。")
+                    )
+                    .frame(maxWidth: .infinity).frame(height: 150)
+                } else {
+                    Divider()
+                    Text("対象一覧（先頭\(preview.items.count)件）").font(.headline)
+                    LazyVStack(spacing: 0) {
+                        ForEach(preview.items) { item in
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.title).lineLimit(1)
+                                    if !item.artist.isEmpty {
+                                        Text(item.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Text(item.myMusicTrackID.uuidString)
+                                        .font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 3) {
+                                    Label(item.favorite ? "お気に入り" : "お気に入り解除",
+                                          systemImage: item.favorite ? "heart.fill" : "heart.slash")
+                                    Text("Good／Bad: \(item.playbackPreference)")
+                                }
+                                .font(.caption)
+                            }
+                            .padding(.vertical, 7)
+                            Divider()
+                        }
+                    }
+                }
+                HStack {
+                    Button("保存先を選ぶ…", systemImage: "square.and.arrow.up") {
+                        Task { await store.confirmPreferencesExport() }
+                    }
+                    .buttonStyle(.borderedProminent).disabled(store.isBusy)
+                    Button("キャンセル", role: .cancel) { store.cancelPreferencesExport() }
+                        .disabled(store.isBusy)
+                    if store.isBusy { ProgressView().controlSize(.small) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private func metric(_ title: String, _ value: Int) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("\(value)").font(.headline.monospacedDigit())
@@ -167,6 +291,12 @@ struct MyMusicTransferView: View {
             banner(message, error: false)
             if let result = store.exportResult, result.kind == .playbackEvents {
                 Text("書き出したイベント: \(result.exportedEvents ?? 0)件　未解決のため除外: \(result.unresolvedEvents ?? 0)件")
+                if let range = result.playbackEventsRange {
+                    Text("対象期間: \(range.lowerBound.formatted(date: .numeric, time: .omitted))〜\(range.upperBound.addingTimeInterval(-1).formatted(date: .numeric, time: .omitted))")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("対象期間: 全期間").font(.caption).foregroundStyle(.secondary)
+                }
                 Text("保存先: \(result.destination)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 if result.hasUnresolvedEventWarning {
                     Text("MyMusicと未接続の曲に対する再生記録は今回のJSONに含まれていません。ライブラリJSONを読み込んで曲を接続すると、次回以降に書き出せます。")
@@ -174,6 +304,9 @@ struct MyMusicTransferView: View {
                 }
             } else if let result = store.exportResult, result.kind == .playlists {
                 Text("総曲数: \(result.totalPlaylistTracks ?? 0)件　書き出し: \(result.exportedEvents ?? 0)件　MyMusic ID未設定: \(result.unresolvedEvents ?? 0)件　ID競合: \(result.conflictedPlaylistTracks ?? 0)件")
+                Text("保存先: \(result.destination)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            } else if let result = store.exportResult, result.kind == .preferences {
+                Text("Macで変更した曲: \(result.exportedEvents ?? 0)件")
                 Text("保存先: \(result.destination)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
         }

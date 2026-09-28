@@ -64,7 +64,7 @@ enum HomeStereoTheme: String, CaseIterable, Identifiable {
         }
     }
 
-    fileprivate var surface: Color {
+    var surface: Color {
         switch self {
         case .system: Color(nsColor: .controlBackgroundColor)
         case .simpleDark: Color(red: 0.110, green: 0.110, blue: 0.118)
@@ -99,7 +99,7 @@ struct HomeStereoThemeRoot<Content: View>: View {
     }
 }
 
-private struct HomeStereoThemeBackground: View {
+struct HomeStereoThemeBackground: View {
     let theme: HomeStereoTheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
@@ -186,6 +186,7 @@ struct HomeStereoThemeSettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 560, height: 440)
+        .homeStereoThemeScreen()
     }
 
     private func themeButton(_ theme: HomeStereoTheme) -> some View {
@@ -226,5 +227,94 @@ extension EnvironmentValues {
     var homeStereoTheme: HomeStereoTheme {
         get { self[HomeStereoThemeKey.self] }
         set { self[HomeStereoThemeKey.self] = newValue }
+    }
+}
+
+private struct HomeStereoThemeScreenModifier: ViewModifier {
+    @Environment(\.homeStereoTheme) private var theme
+
+    func body(content: Content) -> some View {
+        ZStack {
+            HomeStereoThemeBackground(theme: theme)
+            if theme != .system {
+                theme.surface.opacity(theme == .simpleDark ? 0.72 : 0.48)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            content.scrollContentBackground(.hidden)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct HomeStereoThemeSidebarModifier: ViewModifier {
+    @Environment(\.homeStereoTheme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .background {
+                if theme == .system {
+                    Color(nsColor: .windowBackgroundColor)
+                } else {
+                    theme.surface.opacity(0.70)
+                }
+            }
+    }
+}
+
+private struct HomeStereoThemeSurfaceModifier: ViewModifier {
+    @Environment(\.homeStereoTheme) private var theme
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .background(theme.surface.opacity(theme == .system ? 1 : 0.68), in: shape)
+            .overlay {
+                if theme != .system && theme != .simpleDark {
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [theme.accent.opacity(0.24), .clear, theme.accent.opacity(0.07)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+                    .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+private struct HomeStereoThemeBarModifier: ViewModifier {
+    @Environment(\.homeStereoTheme) private var theme
+
+    func body(content: Content) -> some View {
+        content.background {
+            if theme == .system {
+                Rectangle().fill(.bar)
+            } else {
+                Rectangle().fill(theme.surface.opacity(theme == .simpleDark ? 0.78 : 0.64))
+            }
+        }
+    }
+}
+
+extension View {
+    func homeStereoThemeScreen() -> some View {
+        modifier(HomeStereoThemeScreenModifier())
+    }
+
+    func homeStereoThemeSidebar() -> some View {
+        modifier(HomeStereoThemeSidebarModifier())
+    }
+
+    func homeStereoThemeSurface(cornerRadius: CGFloat) -> some View {
+        modifier(HomeStereoThemeSurfaceModifier(cornerRadius: cornerRadius))
+    }
+
+    func homeStereoThemeBar() -> some View {
+        modifier(HomeStereoThemeBarModifier())
     }
 }
