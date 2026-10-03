@@ -678,6 +678,39 @@ final class MyMusicPersistenceTests: XCTestCase {
         XCTAssertEqual(context.playlists.first?.id, playlist.id)
     }
 
+    func testShortMacHistoryCleanupPreservesImportsAndPreferences() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let track = fixture.track(title: "Cleanup", artist: "A", album: "B")
+        try await fixture.insert([track], into: repository)
+        try await repository.saveFavorite(Favorite(trackID: track.id))
+        try await repository.saveTrackPreference(TrackPreference(trackID: track.id, playbackPreference: 5))
+        for seconds in [0.0, 30, 31] {
+            try await repository.savePlaybackEvent(PlaybackEvent(trackID: track.id, playedSeconds: seconds))
+            for platform in ["macOS", "iOS"] {
+                _ = try await repository.appendLocalMyMusicPlaybackEvent(LocalMyMusicPlaybackEvent(
+                    eventID: "\(platform == "macOS" ? "mac" : "ios")-\(seconds)", homeStereoTrackID: track.id,
+                    playedAt: Date(timeIntervalSince1970: 100 + seconds), playDuration: seconds,
+                    trackDuration: 60, completed: false, skipped: false,
+                    playSource: .library, selectionType: .manual, platform: platform
+                ))
+            }
+        }
+        let removed = try await repository.deleteShortMacPlaybackHistory()
+        XCTAssertEqual(removed.history, 2)
+        XCTAssertEqual(removed.events, 2)
+        let history = try await repository.loadPlaybackEvents()
+        XCTAssertEqual(history.map(\.playedSeconds), [31])
+        let context = try await repository.loadAnalyticsContext()
+        XCTAssertEqual(context.events.count, 4)
+        XCTAssertEqual(context.favorites.map(\.trackID), [track.id])
+        XCTAssertEqual(context.preferences.first?.playbackPreference, 5)
+        let again = try await repository.deleteShortMacPlaybackHistory()
+        XCTAssertEqual(again.history, 0)
+        XCTAssertEqual(again.events, 0)
+    }
+
     func testRemovingLibraryTrackKeepsPlaybackEventAsUnresolvedHistory() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

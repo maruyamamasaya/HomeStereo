@@ -21,7 +21,7 @@ swift run home-stereo --renderer <renderer-ipv4> --file '/absolute/path/to/audio
 ./scripts/deploy-macos.sh
 ```
 
-scriptは次を一連で行う。
+scriptは最初に独立[HomeStereo Analyzer](analyzer/README.md)のruntime／model／codeを導入・更新し、その後次を一連で行う。解析実行中は環境更新を拒否する。
 
 1. 名前が`HomeStereo`の実行中processをすべて通常終了し、終了できなければ配置を中止する。
 2. 同じbundle identifierの非正式copyをLaunch Servicesから解除し、XcodeのDebug build成果物をcleanする。
@@ -99,3 +99,5 @@ HTTP serverはRendererへの経路上のLAN IPv4へbindし、8765から空きpor
 - Pause失敗: 検証したHG1／HG10はUPnP 701でPauseを拒否する。HomeStereoは停止確認付きStopへfallbackし、再開位置は保持しない。
 - Sonyステレオが表示されない: SRS-HG1とSRS-HG10の両方がAVTransport付きで検出されているか確認し、再検索する。
 - Sonyステレオの最初の再生が遅い: 選曲直後とQueue再生中の次曲を先行変換する。先読み前に再生した直接選曲は左右WAV生成完了まで待つ。同一音源・設定の直近2件は再利用する。
+
+解析補助アプリはnative launcherでPython処理終了まで待機する。起動エラーは専用Application Support内のlauncher-error.logで確認する（個人pathを含み得るため共有しない）。本体変更なしのlauncher更新はscripts/install-analyzer.shを使う。

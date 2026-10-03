@@ -8,10 +8,11 @@ public enum DLNASidebarDestination: Hashable, Sendable {
     case songs
     case albums
     case artists
+    case workBGM
+    case highResolution
     case folders
     case queue
     case playlists
-    case workPlaylists
     case favorites
     case history
     case analytics
@@ -19,6 +20,7 @@ public enum DLNASidebarDestination: Hashable, Sendable {
     case backup
     case myMusic
     case myMusicStatus
+    case features
     case developer
     case playback
 }

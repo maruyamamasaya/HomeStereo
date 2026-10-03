@@ -21,10 +21,10 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - 検索／sort可能な曲・Album・Artist画面、詳細収録曲、上限付きArtwork cache
 - 永続Queue、編集、前後移動、Shuffle／Repeat、AVTransport完走連携
 - ローカルPlaylist、順序編集、missing参照保持、M3U8 Import／Export
-- Favorite、完走／途中停止を含む再生履歴、最近／頻繁／未再生一覧
+- Favorite、完走／途中停止を含む再生履歴、最近／頻繁／未再生一覧。Macで新規生成する履歴・Playback Eventsは実聴時間が30秒を超えた場合だけ保存する（30秒以下は完走も除外）。MyMusic Importと既存保存済み履歴は維持する
 - Sidebarの「分析」で、概要、上位曲、日別event履歴、理由付き傾向、FavoriteとGood／Bad別の完走／Skip傾向を端末内だけで集計・表示する。schema v12でMyMusic Library JSONの`playCount`全件を紐付け不能曲も含めた正本として保存し、総再生回数・曲別回数・ランキングへ使う。期間別回数・再生時間・完走／Skip率はraw eventから集計し、履歴削除はMyMusic集計、Preference、Playlist、曲情報を維持する
 - 分析の再生履歴ではPlayback Events JSON既存の`platform`を使い、MyMusicアプリ由来を「App」、HomeStereo由来を「Mac」と曲ごとに表示する。Library JSONのみの累計値は再生元を判定しない
-- media key／MPRemoteCommandCenter、Now Playing、MenuBarExtra
+- media key／MPRemoteCommandCenter、Now Playing、MenuBarExtra。メニューバーから現在曲のGood／Bad（−10〜+10）を操作でき、下部再生バー右側と小型プレイヤーにも数値バッジ付き評価アイコンを表示する
 - sleep／wake・network監視、UDN再発見、有限backoff、明示的な再開確認
 - FSEvents変更監視、debounce、自動差分scan、sleep停止／復帰scan
 - schema v1 JSON Export／preview／transactional Import、Track hint照合、rollback
@@ -33,7 +33,7 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - 管理Sidebarの「MyMusic連携」からLibrary／Playlist／Preferences／Playback Eventsの4種類を個別にPreview／確認Importし、標準保存panelへExportする手動連携画面。PreferencesはJSON schemaを変えず、MyMusic ImportでMacを同じ状態へ揃えた後、schema v14で記録するMac側のFavorite／Good／Bad変更曲だけを件数・一覧Preview付きで差分Exportする。保存成功時だけ同じ変更tokenを送信済みにし、Preview後の再編集は次回分へ残す。Playback Eventsは既定の直近1か月または任意の開始日〜終了日、全期間を選んで書き出せる。Import Preview表示中でも別のImport／Exportへ切り替えられる
 - 管理Sidebarの「MyMusic適用状況」で全HomeStereo曲のローカルTrack ID、MyMusic TrackID、snapshot在籍、照合方法、Library JSON出力可否、Preferences／Events／MyMusic Playlist適用を曲単位で確認可能。Playlist／Preferences Import後は対応する画面Storeを即時再読込する
 - 管理Sidebarの臨時「開発者」で、MyMusic向け4種類のJSONを現在値から生成または既存ファイルから開き、文書設定と曲／イベント／プレイリストを1件ずつ表形式で編集して、形式検証後に別ファイルへ書き出せる。編集はSQLiteへ反映しない
-- MyMusic Playlist JSON v1の単一／複数形式、Canonical Track ID完全一致による部分Import、playlistID単位の冪等更新、MyMusic未接続曲を除外するExport。`kind`を維持し、通常と作業用をSidebarの別画面へ分離する。作業用曲は再生時間で推測せずgenreの「作業用BGM」だけで判定する
+- MyMusic Playlist JSON v1の単一／複数形式、Canonical Track ID完全一致による部分Import、playlistID単位の冪等更新、MyMusic未接続曲を除外するExport。`kind`は交換互換用metadataとして維持しつつ、Sidebarでは全プレイリストを1画面に統合し、通常曲・作業用BGM・ハイレゾを混在できる。作業用曲は再生時間で推測せずgenreの「作業用BGM」だけで判定する
 - MyMusic Library v1の`relativePath`を両端末の共通音楽ルート以下に限定し、保存済みMyMusic ID→正規化path＋size／duration→移動時fingerprint→一意metadataの順で既存HomeStereo曲へ外部IDを関連付ける。端末固有絶対pathとHomeStereo ID再生成は行わない
 - 30,000曲fixture計測、DB index／未変更upsert省略、全曲Table表示、background並び替え、検索debounce、Artwork downsample
 - 曲一覧のfilter／検索では同じ曲集合・sort条件の全件sort済みbaseを再利用し、再構築をbackground actorで直列化する。filter解除時はnative tableを世代単位で置き換え、大量行の差分insertによる応答停止を避ける
@@ -47,19 +47,21 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - Queue Inspectorは初回起動時に開いた状態とし、Toolbarから閉じた状態も以後復元する。キュー全消去の管理メニューは非表示。
 - 曲一覧とアルバム／アーティスト詳細は、行のシングルクリックでは選択だけを行い、ダブルクリックで現在再生を変えずキュー末尾へ1回追加する。行とは独立した再生ボタンだけが現在曲へ割り込み、元の再生を終了してクリック曲を現在位置の直後へ挿入し、既存の待ち曲を保持したまま1段下げる。
 - 曲一覧の左端には、今すぐ再生、キュー末尾へ追加、追加先を選べるプレイリストメニュー、お気に入り、MyMusic互換のGood／Badボタンをコンパクトに並べる。Goodは1クリックごとに`+1`、Badは`-1`し、`-10...+10`で上限・下限を設けてSQLiteへ保存する。正のGood／負のBadには現在の強度を小さなバッジで表示する。
-- 用途別SidebarとArtwork／基本操作／出力先を備えた常設Now Playingバー
+- 用途別SidebarとArtwork／基本操作／出力先を備えた常設Now Playingバー。通常の「曲」一覧から作業用BGMとハイレゾを除外し、Sidebarの「音源の特性」にgenreの「作業用BGM」による用途filterと、genreが「ハイレゾ」または「44.1kHz・16bit以上」かつ「24bit以上または48kHz超」によるハイレゾfilterを置く。曲データとAlbum／Artist参照は共通ライブラリのまま維持する
 - 設定または「表示」メニューから、システム／シンプルダーク／Living Aurora／Pulse Neon／Blue Cosmosを選択し、端末内へ保存できるテーマ設定。GitHub `maruyamamasaya/living-aurora-ui` commit `7138d4a…`のtokenと光を面として扱う設計をmacOS向けに縮小し、全detail画面、sidebar、inspector、案内barをテーマ背景＋半透明surfaceで統一する。曲TableのmacOS標準交互行背景は無効化し、Reduce Transparency／increased contrastでは装飾光を外す
 - 1280×760pxを初期値とし、1920×1080の全画面から960×540級までを対象にしたメインWindow。狭い幅ではQueue Inspectorを自動退避してメイン領域を確保し、ToolbarからQueue画面へ移動できる。短い高さではSidebarのセクション見出しだけを省略して全項目を表示する。Renderer選択付きNow Playingバーは文字を縮小せず幅に応じて2段になる
 - スピーカー選択から曲選択へ進む初回ガイドと、無効な再生操作の理由表示
 - Queue曲／直接ファイル／Renderer変更を統合するNow Playing表示modelと6状態表示
 - 行内再生と選択曲メニューを備えた曲一覧、検索件数と検索0件の専用表示
+- 曲・お気に入り・音源分類の一覧とAlbum／Artist詳細に「ランダム表示」「元の順序に戻す」を追加。表示順だけをbackgroundでO(n) shuffleし、結果を画面内で再利用する。曲一覧の列sort／絞り込み変更や詳細の音源更新で解除する。Artistのランダム表示中はアルバム区切りを外して全曲を表示する
 - 曲一覧の全件表示、曲名／アーティスト／アルバム／ジャンル／年／時間ヘッダーの昇順・降順、ジャンル絞り込み。音質／サイズ／ファイルパスは初期非表示とし、「表示項目」から個別に表示して選択状態を保存できる
 - Sidebarの「ジャンルプリセット」で、複数ジャンルと「ジャンル未設定」をまとめたプリセットを作成・編集・削除・並べ替えできる。SQLite schema v13で順序を永続化し、曲一覧上部のタグから即時適用する。iPhone互換の`mymusic.genre-display-presets` version 1 JSONを厳格検証してImport／Exportする
 - 曲一覧の任意列に形式・ビットレート・サンプルレート、サイズ、ファイルパスを表示。metadata schema v3の再スキャンでジャンル、年、ビットレートを取得し、SQLite schema v8へ保存
 - FLACのVorbis Commentをformat固有metadataから正規化し、タイトル、アーティスト、アルバム、アルバムアーティスト、ジャンル、年、作曲者、曲番号／総曲数、ディスク番号／総ディスク数を取得。metadata version 5で既存曲も再スキャン
 - Artworkグリッドのアルバム一覧と、Artwork／主要操作／曲番号を備えたアルバム詳細
 - Artworkグリッドのアーティスト一覧と、アルバム単位の収録曲／全曲再生／Shuffleを備えたアーティスト詳細
-- Artwork付きのお気に入り／再生履歴と、再生中・利用不可・空・エラー状態の非モーダル表示
+- お気に入りはライブラリと共通の曲Tableで表示し、検索、列sort、表示項目、ジャンル絞り込みとジャンルプリセットを利用できる。再生／Shuffleは絞り込み後の利用可能曲が対象
+- Artwork付きの再生履歴と、再生中・利用不可・空・エラー状態の非モーダル表示
 - 再生済み／再生中／次／その後を区別し、並べ替えと「次に再生」へ集中した再生キュー
 - 再生済みのキュー項目は既定で非表示とし、キュー上部のボタンで表示を切り替える。キューが100曲を超える追加では先頭の古い項目から自動削除する。
 - 再生キュー下部の操作不能な一括選択バーは表示せず、各行右端の専用ドラッグハンドルから並べ替える。再生中の行は固定し、ハンドル手前のマイナスボタンで確認なしに1曲だけ削除できる。左側の「次」「その後」と曲の時間は表示せず、再生中だけArtwork上のスピーカーアイコンで示す。
@@ -86,7 +88,7 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - HomeStereo本体でL soundbar（SRS-HG10）をLEFT、R soundbar（SRS-HG1）をRIGHTとして選ぶSonyステレオ出力。選択曲をAVFoundationで左右のPCM WAVへ分離し、2つのHTTP server／UPnP controllerから同時送信する
 - Sonyステレオの既定出力品質を安定優先48kHz／16-bit PCMとし、下部バーから現在の遅延設定を通した16秒・ピーク約-18dBFSの3連クリック群を再生する聴感同期チェック。通常曲選択とQueue完走処理には影響しない
 - Sonyステレオ再生中に下部バーの通信リセットから、遅延・L/R・音量・選択曲を保持したまま両Rendererを停止し、左右のHTTP配信と再生URIを破棄して新規接続する。再生中だった場合は現在曲を先頭から同期再開する
-- XCTest 97件中96件成功＋任意実行の性能test 1件skip、Swift Testing 77件成功、ad-hoc署名Debug build
+- XCTest 98件中97件成功＋任意実行の性能test 1件skip、Swift Testing 77件成功、ad-hoc署名Debug build
 - このMac向けad-hoc署名Release版を、実行中copyの終了、clean build、bundle単位の置換、署名・build番号・SHA-256照合、一時成果物削除を行う`./scripts/deploy-macos.sh`で`/Applications/HomeStereo.app`へ一意に配置
 
 ## Current Issues
@@ -114,3 +116,20 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - **P1:** VoiceOver、Full Keyboard Access、Space、Command-F、Command-Oを含むキーボード操作の通し確認が未完了。
 
 UI項目の個別状態と完了条件は[`docs/ui-improvement-backlog.md`](docs/ui-improvement-backlog.md)の「確認待ち」を正本とする。
+
+## 音楽特徴量 Import Beta（2026-10-03）
+
+- Sidebar「音楽特徴量」でMyMusic snapshot v1／Analyzer schema v1の全件検証、確認Import、未照合保持、再照合、曲別詳細、全件保存用／解析グループ別iPhone互換JSON Exportに対応。解析実行は次段階。
+- 独立actorのatomic JSON保存でSQLite schemaと再生経路を変更しない。モデル名は既存JSONにないため不明として表示する。
+- 提供された9,283件のround-trip、2万件の重複しない保存を含む追加7テストが成功。全体はXCTest 107件（1 skip）、Swift Testing 79件成功、macOS Debug build成功。実際のアプリ画面操作と実ライブラリへの照合件数は未確認。詳細は[特徴量](docs/track-features.md)。
+
+## 音楽特徴量の実行・音量補正 Beta（2026-10-04）
+
+- 未解析曲、音量未解析、旧版・変更曲の実行ボタンと件数、進捗、中断、完了結果のImportを追加。既存の解析済みJSONを対象判定に使う。
+- 独立HomeStereoAnalyzerをLaunch Servicesで起動し、評価済みEffNet＋分類headとFFmpeg LUFS／True Peakを実行。独立venv／検証済みmodel／component別SQLite cacheを用意し、MyMusic repositoryへ実行時依存しない。本体sandboxは変更なし。
+- 「このMac」出力に既定OFFの音量補正を追加。全曲−4 dB headroomを使う固定gain方式で音源を変更しない。DLNAへの適用は未対応。
+- 合成音源の実推論、NSWorkspace実起動、差分判定、cache／日時保持／中断、再生開始時gain適用を検証。実ライブラリ全件解析と実聴感は未確認。[詳細](analyzer/README.md)。
+
+音楽特徴量の解析画面は総曲数・処理済み曲数・割合・失敗件数と進捗バーを表示する。成功結果は1曲ごとに復旧journalへ保存し、中断／異常終了時とアプリ再起動後にarchiveへ取り込む。未完了分は実行ボタンから再実行できる。
+
+解析補助アプリへのjob受け渡しをJSON document open eventへ変更。本体と同じsandbox制限の検証アプリで、container内requestの到達と完了を確認した。

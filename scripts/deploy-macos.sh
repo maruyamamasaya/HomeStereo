@@ -87,6 +87,8 @@ unregister_indexed_noncanonical_copies() {
 
 cd "$project_root"
 
+"$script_dir/install-analyzer.sh"
+
 stop_running_copies
 unregister_indexed_noncanonical_copies
 

@@ -816,6 +816,22 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
         }
     }
 
+    /// One-off cleanup of HomeStereo-generated short history. Imported events are preserved.
+    public func deleteShortMacPlaybackHistory() async throws -> (history: Int, events: Int) {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try execute("DELETE FROM playback_events WHERE played_seconds <= 30")
+                let history = Int(sqlite3_changes(database))
+                try execute("DELETE FROM mymusic_playback_events WHERE platform = 'macOS' AND event_id GLOB 'mac-*' AND play_duration <= 30")
+                let events = Int(sqlite3_changes(database))
+                try rebuildPlaybackSummariesStatements()
+                try execute("COMMIT")
+                return (history, events)
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
+    }
+
     public func deleteAnalyticsHistory(trackID: Track.ID?) async throws {
         try withLock {
             try execute("BEGIN IMMEDIATE TRANSACTION")

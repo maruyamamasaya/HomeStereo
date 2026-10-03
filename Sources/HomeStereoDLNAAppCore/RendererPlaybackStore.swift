@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(HomeStereoAppCore)
+import HomeStereoAppCore
+#endif
 #if canImport(HomeStereoKit)
 import HomeStereoKit
 #endif
@@ -237,7 +240,9 @@ public final class RendererPlaybackStore {
     }
 
     public func selectDevice(_ id: String?) {
-        if isThisMacSelected, id == nil { return }
+        // SwiftUI's List can publish nil when the user clicks its empty area.
+        // Output selection should only change through an explicit destination choice.
+        guard let id else { return }
         guard id != selectedDeviceID || isSonyStereoSelected || isThisMacSelected else { return }
         beginPlaybackGeneration()
         localPlayer.stop()
@@ -409,6 +414,17 @@ public final class RendererPlaybackStore {
         catch { /* Playback surfaces the same preparation error if this track is selected. */ }
     }
 
+    @ObservationIgnored private var normalizationFeatures: [UUID: FeatureValues] = [:]
+    public private(set) var normalizationEnabled = false
+    public func configureNormalization(features: [UUID: FeatureValues], enabled: Bool) {
+        normalizationFeatures = features; normalizationEnabled = enabled
+        if isThisMacSelected { applyLocalNormalization() }
+    }
+    private func applyLocalNormalization() {
+        let features = selectedLibraryTrackID.flatMap { normalizationFeatures[$0] }
+        localPlayer.setAmplitude(NormalizationPlaybackPolicy.amplitude(features: features, enabled: normalizationEnabled))
+    }
+
     public func play() async {
         await serializeCommand { [weak self] in
             guard let self else { return }
@@ -424,6 +440,7 @@ public final class RendererPlaybackStore {
                         let localDuration = self.localPlayer.itemDuration()
                         if localDuration > 0 { self.duration = localDuration }
                     }
+                    self.applyLocalNormalization()
                     self.localPlayer.play()
                     self.setPlaybackState(.playing)
                     self.startPolling()

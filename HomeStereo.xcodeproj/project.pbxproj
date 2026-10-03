@@ -67,6 +67,11 @@
 		D10000000000000000000001 /* GenreDisplayPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* GenreDisplayPreset.swift */; };
 		D10000000000000000000002 /* GenreDisplayPresetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* GenreDisplayPresetStore.swift */; };
 		D10000000000000000000003 /* GenreDisplayPresetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* GenreDisplayPresetsView.swift */; };
+		E10000000000000000000001 /* TrackFeatures.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* TrackFeatures.swift */; };
+		E10000000000000000000002 /* TrackFeatureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* TrackFeatureStore.swift */; };
+		E10000000000000000000003 /* TrackFeatureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000003 /* TrackFeatureView.swift */; };
+		E10000000000000000000004 /* FeatureAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000004 /* FeatureAnalysis.swift */; };
+		E10000000000000000000005 /* FeatureAnalysisService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000005 /* FeatureAnalysisService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -133,6 +138,11 @@
 		D20000000000000000000001 /* GenreDisplayPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreDisplayPreset.swift; sourceTree = "<group>"; };
 		D20000000000000000000002 /* GenreDisplayPresetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreDisplayPresetStore.swift; sourceTree = "<group>"; };
 		D20000000000000000000003 /* GenreDisplayPresetsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreDisplayPresetsView.swift; sourceTree = "<group>"; };
+		E20000000000000000000001 /* TrackFeatures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackFeatures.swift; sourceTree = "<group>"; };
+		E20000000000000000000002 /* TrackFeatureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackFeatureStore.swift; sourceTree = "<group>"; };
+		E20000000000000000000003 /* TrackFeatureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackFeatureView.swift; sourceTree = "<group>"; };
+		E20000000000000000000004 /* FeatureAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureAnalysis.swift; sourceTree = "<group>"; };
+		E20000000000000000000005 /* FeatureAnalysisService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureAnalysisService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +191,8 @@
 				A20000000000000000000019 /* MyMusicPersistenceService.swift */,
 				A20000000000000000000020 /* MyMusicPlaybackSession.swift */,
 				A20000000000000000000021 /* MyMusicTransferService.swift */,
+				E20000000000000000000004 /* FeatureAnalysis.swift */,
+				E20000000000000000000001 /* TrackFeatures.swift */,
 				A20000000000000000000022 /* AnalyticsModels.swift */,
 				A20000000000000000000023 /* AnalyticsService.swift */,
 				D20000000000000000000001 /* GenreDisplayPreset.swift */,
@@ -235,6 +247,8 @@
 				C20000000000000000000018 /* RecoveryStore.swift */,
 				C20000000000000000000019 /* BackupStore.swift */,
 				C2000000000000000000001B /* MyMusicTransferStore.swift */,
+				E20000000000000000000005 /* FeatureAnalysisService.swift */,
+				E20000000000000000000002 /* TrackFeatureStore.swift */,
 				C2000000000000000000001D /* AnalyticsStore.swift */,
 				D20000000000000000000002 /* GenreDisplayPresetStore.swift */,
 			);
@@ -253,6 +267,7 @@
 				C20000000000000000000017 /* MenuBarPlaybackView.swift */,
 				C2000000000000000000001A /* BackupView.swift */,
 				C2000000000000000000001C /* MyMusicTransferView.swift */,
+				E20000000000000000000003 /* TrackFeatureView.swift */,
 				C2000000000000000000001E /* AnalyticsView.swift */,
 				C2000000000000000000001F /* HomeStereoTheme.swift */,
 				D20000000000000000000003 /* GenreDisplayPresetsView.swift */,
@@ -318,6 +333,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E10000000000000000000001 /* TrackFeatures.swift in Sources */,
+				E10000000000000000000002 /* TrackFeatureStore.swift in Sources */,
+				E10000000000000000000003 /* TrackFeatureView.swift in Sources */,
+				E10000000000000000000004 /* FeatureAnalysis.swift in Sources */,
+				E10000000000000000000005 /* FeatureAnalysisService.swift in Sources */,
 				A10000000000000000000001 /* Track.swift in Sources */,
 				A10000000000000000000002 /* Protocols.swift in Sources */,
 				A10000000000000000000004 /* FolderAccessService.swift in Sources */,

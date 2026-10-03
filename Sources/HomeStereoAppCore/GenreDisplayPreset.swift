@@ -2,7 +2,7 @@ import Foundation
 
 public struct GenreDisplayPreset: Identifiable, Equatable, Codable, Sendable {
     public static let unassignedGenreID = "maruyama.MyMusic.genre.unassigned"
-    public static let fixedGenreNames: Set<String> = ["作業用BGM", "ハイレゾ"]
+    public static let fixedGenreNames: Set<String> = [Track.workPlaybackGenre, Track.highResolutionGenre]
 
     public let id: UUID
     public var name: String

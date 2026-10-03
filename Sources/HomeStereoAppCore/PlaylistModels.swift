@@ -3,13 +3,6 @@ import Foundation
 public enum PlaylistKind: String, CaseIterable, Sendable {
     case regular
     case work
-
-    public func accepts(_ track: Track) -> Bool {
-        switch self {
-        case .regular: !track.isEligibleForWorkPlayback
-        case .work: track.isEligibleForWorkPlayback
-        }
-    }
 }
 
 public struct PlaylistItem: Identifiable, Hashable, Sendable {

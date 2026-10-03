@@ -45,6 +45,7 @@ public final class SystemAudioPlayer: LocalAudioPlaying {
         player.replaceCurrentItem(with: item)
     }
 
+    public func setAmplitude(_ value: Float) { player.volume = max(0, min(1, value)) }
     public func play() { player.play() }
     public func pause() { player.pause() }
     public func stop() { player.pause(); seek(to: 0) }

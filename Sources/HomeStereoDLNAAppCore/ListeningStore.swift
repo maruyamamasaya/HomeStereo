@@ -19,8 +19,6 @@ public final class ListeningStore {
     @ObservationIgnored private let library: LibraryStore
     @ObservationIgnored private let queue: QueueStore
     @ObservationIgnored private var activeEvent: PlaybackEvent?
-    @ObservationIgnored private var lastTick: ContinuousClock.Instant?
-    @ObservationIgnored private var isPlaying = false
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var myMusicSession: MyMusicPlaybackSession?
     @ObservationIgnored private var myMusicTrackIDs: [Track.ID: UUID] = [:]
@@ -131,7 +129,11 @@ public final class ListeningStore {
 
     public func flush() async {
         tick()
-        guard let event = activeEvent else { return }
+        guard let event = activeEvent else {
+            await saveTask?.value
+            return
+        }
+        guard event.playedSeconds > 30 else { return }
         saveTask?.cancel()
         saveTask = nil
         do { try await repository.savePlaybackEvent(event); replace(event) }
@@ -145,14 +147,10 @@ public final class ListeningStore {
         trackID: Track.ID, duration: TimeInterval,
         source: MyMusicPlaySource, selection: MyMusicSelectionType
     ) {
-        if activeEvent?.trackID == trackID { isPlaying = true; lastTick = .now; return }
+        if activeEvent?.trackID == trackID { myMusicSession?.setPlaying(true); return }
         finish(reason: .directSelection)
         let event = PlaybackEvent(trackID: trackID)
         activeEvent = event
-        isPlaying = true
-        lastTick = .now
-        replace(event)
-        scheduleCheckpoint()
         myMusicSession = MyMusicPlaybackSession(
             eventID: "mac-\(UUID().uuidString.lowercased())", homeStereoTrackID: trackID,
             myMusicTrackID: myMusicTrackIDs[trackID],
@@ -162,28 +160,23 @@ public final class ListeningStore {
 
     private func stateChanged(_ state: RendererPlaybackState) {
         tick()
-        isPlaying = state == .playing
-        lastTick = isPlaying ? .now : nil
-        myMusicSession?.setPlaying(isPlaying)
+        myMusicSession?.setPlaying(state == .playing)
     }
 
     private func observe(position: TimeInterval) {
-        tick()
         myMusicSession?.observe(
             position: position,
             maximumContinuousDelta: MyMusicPlaybackPolicy.maximumContinuousPositionDelta
         )
+        tick()
     }
 
     private func tick() {
-        guard isPlaying, var event = activeEvent, let lastTick else { return }
-        let now = ContinuousClock.now
-        let elapsed = lastTick.duration(to: now)
-        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-        event.playedSeconds += max(0, min(seconds, 5))
+        guard var event = activeEvent else { return }
+        // Share actual listening time with the exported event; pauses and seeks do not count.
+        event.playedSeconds = myMusicSession?.listenedSeconds ?? 0
         activeEvent = event
-        self.lastTick = now
-        scheduleCheckpoint()
+        if event.playedSeconds > 30 { scheduleCheckpoint() }
     }
 
     private func finish(reason: MyMusicPlaybackEndReason) {
@@ -191,14 +184,18 @@ public final class ListeningStore {
         if var event = activeEvent {
             event.outcome = reason == .naturalEnd ? .completed : .stopped
             activeEvent = nil
-            replace(event)
-            saveImmediately(event)
+            if event.playedSeconds > 30 {
+                replace(event)
+                saveImmediately(event)
+            } else {
+                saveTask?.cancel()
+                saveTask = nil
+            }
         }
-        isPlaying = false
-        lastTick = nil
-        guard var session = myMusicSession, let finalized = session.finalize(reason: reason) else { return }
+        let pendingSession = myMusicSession
         myMusicSession = nil
-        guard let myMusicRepository else { return }
+        guard var session = pendingSession, let finalized = session.finalize(reason: reason),
+              finalized.playDuration > 30, let myMusicRepository else { return }
         Task { [weak self] in
             do {
                 let inserted = try await myMusicRepository.appendLocalMyMusicPlaybackEvent(finalized)
@@ -231,7 +228,7 @@ public final class ListeningStore {
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(10))
             guard let self, !Task.isCancelled else { return }
-            guard let event = self.activeEvent else {
+            guard let event = self.activeEvent, event.playedSeconds > 30 else {
                 self.saveTask = nil
                 return
             }

@@ -1,0 +1,44 @@
+{
+  "models": {
+    "discogs": {
+      "base": "music-style-classification/discogs-effnet/discogs-effnet-bsdynamic-1",
+      "prefix": "discogs"
+    },
+    "tags": {
+      "base": "classification-heads/mtg_jamendo_top50tags/mtg_jamendo_top50tags-discogs-effnet-1",
+      "prefix": "tags"
+    },
+    "mood": {
+      "base": "classification-heads/mtg_jamendo_moodtheme/mtg_jamendo_moodtheme-discogs-effnet-1",
+      "prefix": "mood"
+    },
+    "voice_instrumental": {
+      "base": "classification-heads/voice_instrumental/voice_instrumental-discogs-effnet-1",
+      "prefix": "voice_instrumental-discogs-effnet-1"
+    },
+    "mood_aggressive": {
+      "base": "classification-heads/mood_aggressive/mood_aggressive-discogs-effnet-1",
+      "prefix": "mood_aggressive-discogs-effnet-1"
+    },
+    "mood_relaxed": {
+      "base": "classification-heads/mood_relaxed/mood_relaxed-discogs-effnet-1",
+      "prefix": "mood_relaxed-discogs-effnet-1"
+    }
+  },
+  "sha256": {
+    "discogs.json": "1e140159496f7f932e4267b478e246bd60fbd526a7a67d3e12684a2978916420",
+    "discogs.onnx": "a280825b334797cf677939db8cd5762c0392aedd0ca6415dbc1cd083f045e43c",
+    "tags.json": "379441a7b9a857c0b0eab0bd5115fd2c845009b25a0a6cc80494ac57eaa15d61",
+    "tags.onnx": "4a02efe69b4b8e64cfcbe2025f6e7307377cae9e8b6d766b9e12148ca69beac6",
+    "mood.json": "d62cd90263e4d613fa7fcce7a831e339450394794af63685f96e065c1a896ab0",
+    "mood.onnx": "7d6270acaa5f4bba4b115a0d6849aca05ed6bd153dcb6d9da4f6ab9f99ef10ff",
+    "voice_instrumental-discogs-effnet-1.json": "43ac2c3b055dfaed20f6232e0f10636c287f1c5a6e5bd02c5585860031964c8f",
+    "voice_instrumental-discogs-effnet-1.onnx": "20155e4c439714b0c45c08644b73c8e12d9dccb173bd4ab9934bf1e5aee837ca",
+    "mood_aggressive-discogs-effnet-1.json": "81773e95d78db1b93283d73b2d06344d1ff79685b57d9428a40d47fdfcf537b8",
+    "mood_aggressive-discogs-effnet-1.onnx": "de36550b5d1660791ad732ed6de6ebfdc3e65dcf50b928b2578ddf103dbfb400",
+    "mood_relaxed-discogs-effnet-1.json": "86c0fe1c2c6d49bf08537bc2d3a602204feaede011ed119c1fc6c36270f60e6a",
+    "mood_relaxed-discogs-effnet-1.onnx": "8ba6515a1e5943a72b3b475e3a25fc7a2ff04142c3eaa6aa0716fca371efdfff"
+  },
+  "license": "CC BY-NC-SA 4.0",
+  "source": "https://essentia.upf.edu/models.html"
+}

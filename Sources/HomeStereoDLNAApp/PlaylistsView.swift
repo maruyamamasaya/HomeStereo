@@ -11,7 +11,6 @@ struct PlaylistsView: View {
     @Bindable var store: PlaylistStore
     @Bindable var queue: QueueStore
     @Bindable var library: LibraryStore
-    let kind: PlaylistKind
     @State private var newName = ""
     @State private var renameValue = ""
     @State private var showsCreateDialog = false
@@ -44,10 +43,10 @@ struct PlaylistsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(navigationTitle)
+        .navigationTitle("プレイリスト")
         .toolbar {
-            Button(createTitle, systemImage: "plus") { beginCreate() }
-            Button("M3U8を読み込む", systemImage: "square.and.arrow.down") { Task { await store.importM3U8(kind: kind) } }
+            Button("プレイリストを作成", systemImage: "plus") { beginCreate() }
+            Button("M3U8を読み込む", systemImage: "square.and.arrow.down") { Task { await store.importM3U8() } }
             if let playlist = selectedPlaylist {
                 playlistManagementMenu(playlist)
             }
@@ -57,7 +56,7 @@ struct PlaylistsView: View {
             Button("作成") {
                 let name = newName
                 newName = ""
-                Task { await store.create(name: name, kind: kind) }
+                Task { await store.create(name: name) }
             }
             .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("キャンセル", role: .cancel) { newName = "" }
@@ -100,13 +99,12 @@ struct PlaylistsView: View {
         .sheet(item: $playlistForTrackPicker) { playlist in
             PlaylistTrackPicker(store: store, playlist: playlist, tracks: library.tracks)
         }
-        .onAppear { store.activate(kind) }
     }
 
     private var playlistSidebar: some View {
         Group {
             if visiblePlaylists.isEmpty {
-                ContentUnavailableView(emptyTitle, systemImage: kind == .work ? "timer" : "music.note.list")
+                ContentUnavailableView("プレイリストなし", systemImage: "music.note.list")
             } else {
                 List(visiblePlaylists, selection: $store.selectedPlaylistIDs) { playlist in
                     playlistSidebarRow(playlist)
@@ -204,7 +202,7 @@ struct PlaylistsView: View {
 
     private func playlistHeaderDetails(_ playlist: Playlist) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(kind == .work ? "作業用プレイリスト" : "プレイリスト")
+            Text("プレイリスト")
                 .font(.caption.bold()).foregroundStyle(.secondary)
             Text(playlist.name).font(.system(size: 28, weight: .bold)).lineLimit(2)
             Text(playlistSummary(playlist, compact: false)).font(.caption).foregroundStyle(.secondary)
@@ -317,7 +315,7 @@ struct PlaylistsView: View {
         } else {
             ZStack {
                 LinearGradient(colors: [.purple.opacity(0.75), .pink.opacity(0.72)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: kind == .work ? "timer" : "music.note.list")
+                Image(systemName: "music.note.list")
                     .font(.system(size: max(18, size * 0.3), weight: .semibold))
                     .foregroundStyle(.white)
             }
@@ -360,15 +358,11 @@ struct PlaylistsView: View {
         showsRenameDialog = true
     }
 
-    private var visiblePlaylists: [Playlist] { store.playlists(of: kind) }
-    private var selectedPlaylist: Playlist? { store.selectedPlaylist(of: kind) }
-    private var navigationTitle: String { kind == .work ? "作業用プレイリスト" : "プレイリスト" }
-    private var createTitle: String { kind == .work ? "作業用プレイリストを作成" : "プレイリストを作成" }
-    private var emptyTitle: String { kind == .work ? "作業用プレイリストなし" : "プレイリストなし" }
+    private var visiblePlaylists: [Playlist] { store.playlists }
+    private var selectedPlaylist: Playlist? { store.selectedPlaylist }
+    private var createTitle: String { "プレイリストを作成" }
     private var emptyDescription: String {
-        kind == .work
-            ? "ジャンルが「作業用BGM」の曲を保存するプレイリストを作成できます。"
-            : "プレイリストを作成すると、好きな曲順を保存できます。"
+        "通常の曲、作業用BGM、ハイレゾを目的に合わせて自由にまとめられます。"
     }
 }
 
@@ -455,7 +449,6 @@ private struct PlaylistTrackPicker: View {
 
     private var compatibleTracks: [Track] {
         tracks
-            .filter { playlist.playlistKind.accepts($0) }
             .sorted {
                 let titleOrder = $0.title.localizedStandardCompare($1.title)
                 if titleOrder != .orderedSame { return titleOrder == .orderedAscending }

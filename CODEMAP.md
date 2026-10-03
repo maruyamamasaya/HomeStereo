@@ -118,3 +118,9 @@ Keywords: `UPnPController`, `SOAPRequestBuilder`, `SOAPResponseParser`, `GetTran
 
 Primary: `Package.swift`, `HomeStereo.xcodeproj/project.pbxproj`, `HomeStereoApp.entitlements`, `scripts/deploy-macos.sh`
 Keywords: `HomeStereoDLNAApp`, `network.client`, `network.server`, `NSLocalNetworkUsageDescription`, `HomeStereoDeployDerivedData`, `CURRENT_PROJECT_VERSION`
+
+## Track Features and Normalization
+
+Primary: `TrackFeatures.swift`, `FeatureAnalysis.swift`, `TrackFeatureStore.swift`, `FeatureAnalysisService.swift`, `TrackFeatureView.swift`, `analyzer/worker.py`, `analyzer/inference.py`
+Keywords: `FeatureAnalysisPlanner`, `FeatureAnalysisMode`, `FeatureRepository`, `NormalizationPlaybackPolicy`, `configureNormalization`, `setAmplitude`, `HomeStereoAnalyzer`, `analysisProfile`, `loudnessSource`
+Tests: `FeatureAnalysisTests.swift`, `FeatureAnalysisServiceTests.swift`, `TrackFeatureTests.swift`, `analyzer/tests/test_worker.py`

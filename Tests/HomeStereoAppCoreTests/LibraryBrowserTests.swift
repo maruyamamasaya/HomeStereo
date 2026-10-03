@@ -69,6 +69,68 @@ final class LibraryBrowserTests: XCTestCase {
         XCTAssertEqual(base.genres, ["Jazz", "Rock"])
     }
 
+    func testHighResolutionIsAQualityAttributeIndependentOfLibraryRelationships() {
+        let examples: [(sampleRate: Double, bitDepth: Int, expected: Bool)] = [
+            (44_100, 16, false),
+            (48_000, 16, false),
+            (44_100, 24, true),
+            (48_000, 24, true),
+            (96_000, 16, true),
+            (96_000, 24, true),
+            (32_000, 24, false),
+            (96_000, 12, false),
+        ]
+        let tracks = examples.enumerated().map { index, example in
+            Track(
+                url: URL(fileURLWithPath: "/tmp/quality-\(index).flac"), title: "Quality \(index)",
+                artist: "Artist", album: "Album",
+                sampleRate: example.sampleRate, bitDepth: example.bitDepth
+            )
+        }
+
+        for (track, example) in zip(tracks, examples) {
+            XCTAssertEqual(
+                track.isHighResolutionAudio, example.expected,
+                "\(example.sampleRate)Hz / \(example.bitDepth)bit"
+            )
+        }
+
+        let tagged = Track(
+            url: URL(fileURLWithPath: "/tmp/tagged.flac"), title: "Tagged",
+            artist: "Artist", album: "Album", genre: "Ambient; ハイレゾ",
+            sampleRate: 32_000, bitDepth: 12
+        )
+        XCTAssertTrue(tagged.isHighResolutionAudio)
+
+        let index = LibraryBrowserIndex(tracks: tracks + [tagged])
+        XCTAssertEqual(index.albums.first?.tracks.count, examples.count + 1)
+        XCTAssertEqual(index.artists.first?.tracks.count, examples.count + 1)
+    }
+
+    func testRegularLibraryTrackExcludesWorkBGMAndHighResolutionTracks() {
+        let regular = Track(
+            url: URL(fileURLWithPath: "/tmp/regular.m4a"), title: "Regular",
+            sampleRate: 48_000, bitDepth: 16
+        )
+        let work = Track(
+            url: URL(fileURLWithPath: "/tmp/work.m4a"), title: "Work",
+            genre: Track.workPlaybackGenre, sampleRate: 48_000, bitDepth: 16
+        )
+        let highResolution = Track(
+            url: URL(fileURLWithPath: "/tmp/high-resolution.flac"), title: "High Resolution",
+            sampleRate: 96_000, bitDepth: 24
+        )
+        let taggedHighResolution = Track(
+            url: URL(fileURLWithPath: "/tmp/tagged-high-resolution.m4a"), title: "Tagged High Resolution",
+            genre: Track.highResolutionGenre, sampleRate: 48_000, bitDepth: 16
+        )
+
+        XCTAssertTrue(regular.isRegularLibraryTrack)
+        XCTAssertFalse(work.isRegularLibraryTrack)
+        XCTAssertFalse(highResolution.isRegularLibraryTrack)
+        XCTAssertFalse(taggedHighResolution.isRegularLibraryTrack)
+    }
+
     private func makeTrack(
         title: String, artist: String?, albumArtist: String?, album: String?, genre: String? = nil,
         duration: TimeInterval = 0

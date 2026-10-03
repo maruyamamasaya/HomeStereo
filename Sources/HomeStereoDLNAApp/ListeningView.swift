@@ -14,6 +14,8 @@ struct ListeningView: View {
     @Bindable var queue: QueueStore
     @Bindable var library: LibraryStore
     @Bindable var playlists: PlaylistStore
+    @Bindable var preferences: PlaybackPreferenceStore
+    @Bindable var genrePresets: GenreDisplayPresetStore
     let mode: ListeningViewMode
     @State private var historySection = 0
     @State private var resetConfirmation: ListeningViewMode?
@@ -73,28 +75,13 @@ struct ListeningView: View {
         }
     }
 
-    @ViewBuilder
     private var favorites: some View {
-        if store.favorites.isEmpty {
-            ContentUnavailableView {
-                Label("お気に入りはありません", systemImage: "heart")
-            } description: {
-                Text("曲のメニューから「お気に入りに追加」を選ぶと、ここからすぐ再生できます。")
-            } actions: {
-                Button("曲を見る") { playback.destination = .songs }
-            }
-        } else {
-            VStack(spacing: 0) {
-                listeningHeader(
-                    title: "お気に入り", subtitle: favoriteSummary,
-                    systemImage: "heart.fill", tint: .pink
-                )
-                Divider()
-                List(store.favorites) { favorite in
-                    trackRow(trackID: favorite.trackID, detail: "\(favorite.addedAt.formatted(date: .abbreviated, time: .omitted))に追加")
-                }
-            }
-        }
+        LibraryView(
+            playback: playback, library: library, queue: queue, playlists: playlists,
+            listening: store, preferences: preferences, genrePresets: genrePresets,
+            mode: .songs, scope: .favorites
+        )
+        .toolbar { favoritePlaybackButtons }
     }
 
     private var history: some View {
@@ -157,35 +144,6 @@ struct ListeningView: View {
         } else {
             List(store.unplayedTracks) { track in
                 trackRow(trackID: track.id, detail: "まだ再生していません")
-            }
-        }
-    }
-
-    private func listeningHeader(title: String, subtitle: String, systemImage: String, tint: Color) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 18) {
-                headerIdentity(title: title, subtitle: subtitle, systemImage: systemImage, tint: tint)
-                Spacer()
-                favoritePlaybackButtons
-            }
-            VStack(alignment: .leading, spacing: 14) {
-                headerIdentity(title: title, subtitle: subtitle, systemImage: systemImage, tint: tint)
-                favoritePlaybackButtons
-            }
-        }
-        .padding(20)
-    }
-
-    private func headerIdentity(title: String, subtitle: String, systemImage: String, tint: Color) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 64, height: 64)
-                .background(tint.gradient, in: RoundedRectangle(cornerRadius: 12))
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.title2.bold())
-                Text(subtitle).foregroundStyle(.secondary)
             }
         }
     }
@@ -262,22 +220,15 @@ struct ListeningView: View {
         }
     }
 
-    private var favoriteSummary: String {
-        let unavailable = store.favorites.count - availableFavoriteIDs.count
-        return unavailable == 0
-            ? "\(store.favorites.count)曲"
-            : "\(store.favorites.count)曲 · \(unavailable)曲は利用できません"
-    }
-
     private var favoritePlaybackDisabled: Bool {
         availableFavoriteIDs.isEmpty || !playback.canPlaySelectedOutput
     }
 
     private var availableFavoriteIDs: [Track.ID] {
-        store.favorites.compactMap { favorite in
-            guard let track = store.track(id: favorite.trackID), track.scanState == .available else { return nil }
-            return track.id
-        }
+        let favoriteIDs = Set(store.favorites.map(\.trackID))
+        return library.visibleTracks.filter {
+            favoriteIDs.contains($0.id) && $0.scanState == .available
+        }.map(\.id)
     }
 
     private func playFavorites(shuffled: Bool) {

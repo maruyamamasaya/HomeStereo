@@ -5,6 +5,7 @@ public enum TrackScanState: String, Sendable { case available, unreadable, missi
 public struct Track: Identifiable, Hashable, Sendable {
     public static let metadataVersion = 5
     public static let workPlaybackGenre = "作業用BGM"
+    public static let highResolutionGenre = "ハイレゾ"
 
     public let id: UUID
     public let libraryFolderID: UUID
@@ -41,6 +42,19 @@ public struct Track: Identifiable, Hashable, Sendable {
 
     public var isEligibleForWorkPlayback: Bool {
         normalizedGenreNames.contains(Self.workPlaybackGenre)
+    }
+
+    /// Quality classification used for library filtering. This does not alter the
+    /// source file or remove the track from its album and artist relationships.
+    public var isHighResolutionAudio: Bool {
+        if normalizedGenreNames.contains(Self.highResolutionGenre) { return true }
+        guard let sampleRate, let bitDepth,
+              sampleRate >= 44_100, bitDepth >= 16 else { return false }
+        return sampleRate > 48_000 || bitDepth >= 24
+    }
+
+    public var isRegularLibraryTrack: Bool {
+        !isEligibleForWorkPlayback && !isHighResolutionAudio
     }
 
     public var normalizedGenreNames: Set<String> {

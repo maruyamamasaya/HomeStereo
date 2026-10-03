@@ -46,10 +46,11 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 - SQLite Library index、差分scan、missing保持、進捗・notice表示
 - Library曲から既存の単曲HTTP／AVTransport経路への受け渡し
 - 曲／Album／Artistの検索・並び替え・詳細表示（AlbumはAlbum Artist＋Album名で識別）
+- 通常の「曲」一覧から作業用BGMとハイレゾを除外し、Sidebarの専用項目から「作業用BGM」（genre属性）と「ハイレゾ」（genreが「ハイレゾ」、または44.1kHz・16bit以上かつ24bit以上／48kHz超）を表示する。音源、Album、Artist参照は複製・分離しない
 - 埋め込みArtworkの遅延読込と上限付きメモリcache
 - 永続Queue、今すぐ／次／末尾追加、並べ替え／削除、前後移動、Shuffle、Repeat
 - AVTransport完走検知による連続再生（通信失敗時は自動進行しない）
-- 通常／作業用を分離したローカルPlaylistの作成／名称変更／削除、曲順編集、通常／Shuffle再生
+- 通常曲／作業用BGM／ハイレゾを混在できるローカルPlaylistの作成／名称変更／削除、曲順編集、通常／Shuffle再生
 - 曲／Album／Artist／現在QueueからのPlaylist追加、missing曲の参照保持
 - M3U8 Import／Export（曖昧な相対pathは自動接続しない）
 - MyMusicを正本とするCanonical Track IDとPlaylist JSONのPreview付きImport／Export。PreferencesはMyMusicからMacへ反映後、Macで変更したFavorite／Good／Badの曲だけを対象一覧で確認して差分書き出し
@@ -136,3 +137,7 @@ L/Rが別Rendererとしてしか見えない場合、AVTransportがない場合�
 - GENA event subscriptionは未実装で、状態はSOAP pollingです。
 - Wireless Stereo代表RendererとL/R出力は実機未確認です。
 - 旧ローカル再生／AirPlay試作コードは作業ツリーに残っていますが、Xcodeの`HomeStereo` targetには含めていません。
+
+### 音楽特徴量の取り込み
+
+「音源の特性 > 音楽特徴量」でMyMusicから書き出した特徴量JSONを選び、件数確認後に取り込めます。曲を選ぶと特徴量、解析版・日時、対象音源が表示されます。既存Analyzer JSONにも対応します。詳しい書き出し方法と制約は[音楽特徴量](docs/track-features.md)を参照してください。

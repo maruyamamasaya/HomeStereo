@@ -55,7 +55,7 @@ SQLite schema v12はローカル分析用の詳細再生event、Track／日別�
 
 SQLite schema v13はジャンル表示プリセットの編集済み正本と配列順を`genre_display_presets`へ保存する。`GenreDisplayPresetStore`がCRUD、並べ替え、同名merge Import、version 1 JSON Exportを担当し、`LibraryStore`は選択されたプリセットを`LibraryBrowserIndex`の複数ジャンルfilterへ渡す。Mac AnalyticsやiPhoneのApplication Supportへ直接書き込まず、`mymusic.genre-display-presets` JSONだけを交換境界とする。
 
-iPhone版MyMusicとの連携は、曲一覧、Playlist、Preferences、Playback Eventsを別々のversion付きJSON文書として扱う。`HomeStereoAppCore`内でCodable DTO、JSON非依存の交換model、Import／Export serviceを分離し、decode後に文書全体を検証してから交換modelへ変換する。Libraryの`relativePath`は両端末で選択した共通音楽ルート以下だけを表し、端末固有の絶対pathを含めない。保存済みMyMusic ID、NFCかつcase-sensitiveなrelative path＋size／duration、fingerprint、一意metadataの順に既存曲へMyMusic IDを関連付け、HomeStereoのTrack主キーは変更・再生成しない。SQLite schema v10は既存Track／Playlist主キーを維持したままCanonical Track ID、snapshot在籍状態、Canonical Playlist ID、Preferences、互換Playback Eventsを保存する。schema v14の`mymusic_preference_export_changes`はMacで変更した曲と世代tokenだけを保持し、Preferences Importで該当曲をMyMusic値へ揃えてdirtyを解除する。Preferences Exportはdirty曲だけを既存schema v2でPreviewし、ファイル保存成功後にPreview時点と一致するtokenだけを解除するため、Preview後の再編集を失わない。Playlist JSONはCanonical Track ID完全一致だけで曲を解決し、単一transactionで追加／更新する。Playlistの`kind`は`regular`／`work`を維持し、UIとローカル追加先を分離する。作業用曲の分類は再生時間ではなくgenreの「作業用BGM」だけを使う。Import commit後は文書種別に応じて表示用Storeを再読込し、`MyMusicStatusStore`は全HomeStereo曲をlink、Preferences、Events、MyMusic Playlistと読み取り専用で結合して適用状況を表示する。詳細は[`docs/mymusic-json-interchange.md`](docs/mymusic-json-interchange.md)を正本とする。
+iPhone版MyMusicとの連携は、曲一覧、Playlist、Preferences、Playback Eventsを別々のversion付きJSON文書として扱う。`HomeStereoAppCore`内でCodable DTO、JSON非依存の交換model、Import／Export serviceを分離し、decode後に文書全体を検証してから交換modelへ変換する。Libraryの`relativePath`は両端末で選択した共通音楽ルート以下だけを表し、端末固有の絶対pathを含めない。保存済みMyMusic ID、NFCかつcase-sensitiveなrelative path＋size／duration、fingerprint、一意metadataの順に既存曲へMyMusic IDを関連付け、HomeStereoのTrack主キーは変更・再生成しない。SQLite schema v10は既存Track／Playlist主キーを維持したままCanonical Track ID、snapshot在籍状態、Canonical Playlist ID、Preferences、互換Playback Eventsを保存する。schema v14の`mymusic_preference_export_changes`はMacで変更した曲と世代tokenだけを保持し、Preferences Importで該当曲をMyMusic値へ揃えてdirtyを解除する。Preferences Exportはdirty曲だけを既存schema v2でPreviewし、ファイル保存成功後にPreview時点と一致するtokenだけを解除するため、Preview後の再編集を失わない。Playlist JSONはCanonical Track ID完全一致だけで曲を解決し、単一transactionで追加／更新する。Playlistの`kind`は`regular`／`work`を交換互換用metadataとして維持するが、UIは全Playlistを同じ画面に表示し、どの曲も複数Playlistへ所属できる。作業用曲の分類は再生時間ではなくgenreの「作業用BGM」だけを使う。ハイレゾはgenreの「ハイレゾ」、または44.1kHz・16bit以上を最低条件として24bit以上／48kHz超を満たす品質属性として扱う。通常の曲一覧はこの2分類を除外し、専用Sidebarでそれぞれを表示する。いずれもTrackを複製せず、Album／Artistとの関係を維持する。Import commit後は文書種別に応じて表示用Storeを再読込し、`MyMusicStatusStore`は全HomeStereo曲をlink、Preferences、Events、MyMusic Playlistと読み取り専用で結合して適用状況を表示する。詳細は[`docs/mymusic-json-interchange.md`](docs/mymusic-json-interchange.md)を正本とする。
 
 ## Protocols
 
@@ -69,3 +69,13 @@ iPhone版MyMusicとの連携は、曲一覧、Playlist、Preferences、Playback 
 sleep／wakeとnetwork path通知は`SystemEventMonitoring`境界に隔離する。復帰時はQueueと履歴を保存したまま、network復帰後に有限の指数backoffでSSDP再検索し、UDNで同一Rendererを選んで実状態を取得する。自動再生・自動音量変更は行わない。
 
 各ローカル再生sessionはgeneration IDを持つ。pollingはawait境界ごとにgenerationを確認し、前曲の遅延応答を破棄する。完走は同一URI、直前の再生状態、終端近傍の位置を合わせて1回だけ確定する。操作commandは直列化し、状態取得SOAPだけtimeout時に1回再試行する。診断Exportはaction、結果、HTTP／UPnP codeだけを保持し、音源path、機器IP、tokenを含めない。
+
+## 音楽特徴量の独立した保存境界
+
+`TrackFeatureView` → `TrackFeatureStore` → `FeatureCodec`／索引化した`FeatureResolver` → `FeatureRepository` actor → Application Supportの`HomeStereo/track-features.json`（archive v1）。既存SQLiteからTrackとMyMusic linkをread-only取得し、特徴量はSQLite／音源から独立して保存する。未照合は破棄せず再照合できる。外部契約はMyMusic snapshot v1とAnalyzer schema v1のまま維持し、両アプリの内部Model・DBを共有しない。詳細と書き出しの用途別制約は[音楽特徴量](docs/track-features.md)を正本とする。
+
+特徴量の実行は`FeatureAnalysisPlanner`で現在Libraryと既存結果から対象を索引化し、`FeatureAnalysisService`がversion 1 JSON jobを独立`HomeStereoAnalyzer.app`へ渡す。専用Python runtime／model／cacheは別Application Supportに置き、本体のsandbox entitlementを広げず、隣接MyMusic repositoryを参照しない。音量解析とsemanticを独立cacheし、結果とprogressをfile経由で返す。`TrackFeatureStore`から検証済み曲別音量値を`RendererPlaybackStore`へ渡し、`SystemAudioPlayer`だけがAVPlayer.volumeを変更する。詳細なprofileと保存境界は[Analyzer](analyzer/README.md)。
+
+解析workerは成功した曲をcompleted.jsonlへ1行ずつ耐久保存する。FeatureRunFilesは完全な行だけを検証し、異常終了時の返却とTrackFeatureStore.loadでの復旧に使用する。復旧時も既存FeatureRepositoryのmerge境界を使い、原本journalは保持する。
+
+Sandbox本体からの解析job受け渡しはNSWorkspace.openのdocument URLを使う。補助アプリのAppKit delegateがopen eventを受け、request pathをPythonへ渡す。command-line arguments指定だけの起動は使用しない。

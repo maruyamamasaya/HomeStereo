@@ -81,6 +81,11 @@ public protocol LocalAudioPlaying: AnyObject {
     func seek(to position: TimeInterval)
     func currentTime() -> TimeInterval
     func itemDuration() -> TimeInterval
+    func setAmplitude(_ value: Float)
+}
+
+public extension LocalAudioPlaying {
+    func setAmplitude(_ value: Float) {}
 }
 
 @MainActor

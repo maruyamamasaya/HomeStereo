@@ -17,6 +17,14 @@ HOMESTEREO_RUN_PERFORMANCE=1 /usr/bin/time -l swift test --filter LibraryPerform
 
 ビルドcache状態に左右される`maximum resident set size`と実行全体時間は比較対象にしない。初回書込とDB容量はindexとの明示的なtrade-offである。
 
+## ランダム表示
+
+曲一覧とAlbum／Artist詳細の`RandomTrackDisplay`は、ボタン操作時だけ`Task.detached`で標準の`shuffled()`を実行する。時間O(n)、追加メモリO(n)で、曲metadataの比較sort、音源I/O、Artwork取得、SQLite更新を追加しない。準備した配列は画面内で再利用し、再生位置更新では並べ替えない。準備中はボタンを無効化し、キャンセル・世代照合で画面移動や対象変更後の結果を破棄する。標準shuffle自体は途中キャンセルしないため、開始済みの有限処理は完了まで動く。
+
+曲Tableは順序変更時にnative tableを置き換え、2万行の差分moveを避ける。曲集合の変更は既存browser世代で検出し、通常曲一覧の再描画ごとに全曲の等価比較を追加しない。ランダム表示はQueueや保存済み並び順を変更せず、検索・filter・列sortの更新で解除する。Artist詳細はランダム中だけ全曲のflatなLazyVStackを使う。
+
+実音源2万曲での操作時間、scroll、ピークメモリのUI計測は未実施。
+
 ## Applied safeguards
 
 - `(folder_id, relative_path)`、Artist、Album Artist＋Album、titleへSQLite indexを追加。

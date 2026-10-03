@@ -19,6 +19,7 @@ struct DLNAContentView: View {
     @Bindable var backup: BackupStore
     @Bindable var myMusic: MyMusicTransferStore
     @Bindable var myMusicStatus: MyMusicStatusStore
+    @Bindable var features: TrackFeatureStore
     @Bindable var developer: MyMusicJSONEditorStore
     @SceneStorage("main.sidebar.visibility") private var sidebarVisibility = "all"
     @AppStorage("main.queueInspector.visible.compactV2") private var queueInspectorVisible = true
@@ -40,12 +41,18 @@ struct DLNAContentView: View {
                         sidebarSectionHeader("ライブラリ")
                     }
                     Section {
+                        Label("音楽特徴量", systemImage: "waveform.path").tag(DLNASidebarDestination.features)
+                        Label("作業用BGM", systemImage: "timer").tag(DLNASidebarDestination.workBGM)
+                        Label("ハイレゾ", systemImage: "waveform.badge.magnifyingglass").tag(DLNASidebarDestination.highResolution)
+                    } header: {
+                        sidebarSectionHeader("音源の特性")
+                    }
+                    Section {
                         Label("お気に入り", systemImage: "heart").tag(DLNASidebarDestination.favorites)
                         Label("履歴", systemImage: "clock.arrow.circlepath").tag(DLNASidebarDestination.history)
                         Label("分析", systemImage: "chart.bar.xaxis").tag(DLNASidebarDestination.analytics)
                         Label("ジャンルプリセット", systemImage: "tag").tag(DLNASidebarDestination.genrePresets)
                         Label("プレイリスト", systemImage: "music.note.list").tag(DLNASidebarDestination.playlists)
-                        Label("作業用プレイリスト", systemImage: "timer").tag(DLNASidebarDestination.workPlaylists)
                     } header: {
                         sidebarSectionHeader("コレクション")
                     }
@@ -74,24 +81,26 @@ struct DLNAContentView: View {
                 Group {
                     switch store.destination {
                     case .devices: DevicesView(store: store, recovery: recovery) { store.destination = .songs }
-                    case .songs: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .songs)
+                    case .songs: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .songs, scope: .regular)
                     case .albums: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .albums)
                     case .artists: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .artists)
+                    case .workBGM: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .songs, scope: .workBGM)
+                    case .highResolution: LibraryView(playback: store, library: library, queue: queue, playlists: playlists, listening: listening, preferences: preferences, genrePresets: genrePresets, mode: .songs, scope: .highResolution)
                     case .folders: LibraryFoldersView(library: library)
                     case .queue: QueueView(playback: store, queue: queue, library: library)
                     case .playlists:
-                        PlaylistsView(playback: store, store: playlists, queue: queue, library: library, kind: .regular)
-                    case .workPlaylists:
-                        PlaylistsView(playback: store, store: playlists, queue: queue, library: library, kind: .work)
+                        PlaylistsView(playback: store, store: playlists, queue: queue, library: library)
                     case .favorites:
                         ListeningView(
                             playback: store, store: listening, queue: queue,
-                            library: library, playlists: playlists, mode: .favorites
+                            library: library, playlists: playlists, preferences: preferences,
+                            genrePresets: genrePresets, mode: .favorites
                         )
                     case .history:
                         ListeningView(
                             playback: store, store: listening, queue: queue,
-                            library: library, playlists: playlists, mode: .history
+                            library: library, playlists: playlists, preferences: preferences,
+                            genrePresets: genrePresets, mode: .history
                         )
                     case .analytics:
                         AnalyticsView(playback: store, queue: queue, library: library, store: analytics)
@@ -99,6 +108,7 @@ struct DLNAContentView: View {
                     case .backup: BackupView(store: backup)
                     case .myMusic: MyMusicTransferView(store: myMusic)
                     case .myMusicStatus: MyMusicStatusView(store: myMusicStatus)
+                    case .features: TrackFeatureView(store: features)
                     case .developer: MyMusicJSONEditorView(store: developer)
                     case .playback: PlaybackView(store: store, queue: queue, library: library)
                     }
@@ -111,7 +121,7 @@ struct DLNAContentView: View {
                 PlaybackErrorBanner(store: store, error: error)
                 Divider()
             }
-            MainNowPlayingBar(store: store, library: library, queue: queue, listening: listening)
+            MainNowPlayingBar(store: store, library: library, queue: queue, listening: listening, preferences: preferences)
             if recovery.state != .connected {
                 Divider()
                 HStack {
@@ -227,6 +237,7 @@ private struct MainNowPlayingBar: View {
     @Bindable var library: LibraryStore
     @Bindable var queue: QueueStore
     @Bindable var listening: ListeningStore
+    @Bindable var preferences: PlaybackPreferenceStore
     @Environment(\.homeStereoTheme) private var theme
     @State private var pendingSeek: Double = 0
     @State private var isSeeking = false
@@ -270,7 +281,10 @@ private struct MainNowPlayingBar: View {
 
                 playbackControls
 
-                playbackStatus(showsVolume: true)
+                HStack(spacing: 14) {
+                    playbackStatus(showsVolume: true)
+                    NowPlayingPreferenceControls(queue: queue, preferences: preferences)
+                }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             seekControl
@@ -290,6 +304,7 @@ private struct MainNowPlayingBar: View {
                 playbackControls
                 Spacer()
                 audioLevelControls
+                NowPlayingPreferenceControls(queue: queue, preferences: preferences)
             }
         }
     }

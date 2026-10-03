@@ -80,13 +80,11 @@ public final class PlaylistStore {
 
     public func add(trackIDs: [Track.ID], to playlistID: UUID) async {
         guard var playlist = playlists.first(where: { $0.id == playlistID }) else { return }
-        let accepted = compatibleTrackIDs(trackIDs, with: playlist.playlistKind)
+        let accepted = trackIDs.filter { library.track(id: $0) != nil }
         guard !accepted.isEmpty else {
-            if !trackIDs.isEmpty { message = incompatibleTracksMessage(for: playlist.playlistKind) }
             return
         }
         playlist.items.append(contentsOf: accepted.map { PlaylistItem(trackID: $0) })
-        if accepted.count != trackIDs.count { message = incompatibleTracksMessage(for: playlist.playlistKind) }
         playlist.updatedAt = .now; await save(playlist)
     }
 
@@ -128,7 +126,7 @@ public final class PlaylistStore {
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
             let result = Self.parseM3U8(text, tracks: library.tracks)
-            let accepted = compatibleTrackIDs(result.trackIDs, with: kind)
+            let accepted = result.trackIDs
             let playlist = Playlist(
                 name: url.deletingPathExtension().lastPathComponent,
                 kind: kind.rawValue,
@@ -154,8 +152,8 @@ public final class PlaylistStore {
 
     public func track(for item: PlaylistItem) -> Track? { library.track(id: item.trackID) }
     public func canAdd(trackIDs: [Track.ID], to playlistID: Playlist.ID) -> Bool {
-        guard let playlist = playlists.first(where: { $0.id == playlistID }) else { return false }
-        return compatibleTrackIDs(trackIDs, with: playlist.playlistKind).count == trackIDs.count
+        guard playlists.contains(where: { $0.id == playlistID }) else { return false }
+        return !trackIDs.isEmpty && trackIDs.allSatisfy { library.track(id: $0) != nil }
     }
 
     public func compatiblePlaylists(for trackIDs: [Track.ID]) -> [Playlist] {
@@ -201,17 +199,4 @@ public final class PlaylistStore {
         catch { message = error.localizedDescription }
     }
 
-    private func compatibleTrackIDs(_ trackIDs: [Track.ID], with kind: PlaylistKind) -> [Track.ID] {
-        trackIDs.filter { id in
-            guard let track = library.track(id: id) else { return false }
-            return kind.accepts(track)
-        }
-    }
-
-    private func incompatibleTracksMessage(for kind: PlaylistKind) -> String {
-        switch kind {
-        case .regular: "作業用BGMの曲は通常プレイリストへ追加できません。"
-        case .work: "ジャンルが「作業用BGM」の曲だけを作業用プレイリストへ追加できます。"
-        }
-    }
 }

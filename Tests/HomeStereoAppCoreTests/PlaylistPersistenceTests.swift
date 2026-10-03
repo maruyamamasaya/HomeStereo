@@ -30,7 +30,7 @@ final class PlaylistPersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.first?.name, "Latest")
     }
 
-    func testPlaylistKindsAndWorkGenreClassificationArePreserved() async throws {
+    func testPlaylistKindsArePreservedAsInterchangeMetadata() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -40,18 +40,5 @@ final class PlaylistPersistenceTests: XCTestCase {
 
         let loaded = try await repository.loadPlaylists()
         XCTAssertEqual(Set(loaded.map(\.playlistKind)), [.regular, .work])
-
-        let work = Track(
-            relativePath: "work.mp3", url: root.appendingPathComponent("work.mp3"),
-            title: "Work", genre: "Ambient; 作業用BGM"
-        )
-        let regular = Track(
-            relativePath: "regular.mp3", url: root.appendingPathComponent("regular.mp3"),
-            title: "Regular", genre: "Ambient"
-        )
-        XCTAssertTrue(PlaylistKind.work.accepts(work))
-        XCTAssertFalse(PlaylistKind.regular.accepts(work))
-        XCTAssertTrue(PlaylistKind.regular.accepts(regular))
-        XCTAssertFalse(PlaylistKind.work.accepts(regular))
     }
 }

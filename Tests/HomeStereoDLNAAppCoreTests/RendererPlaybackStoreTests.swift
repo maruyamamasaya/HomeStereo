@@ -33,6 +33,23 @@ import Testing
 }
 
 @MainActor
+@Test func normalizationAppliesPerTrackAndToggleRestoresPlayerVolume() async {
+    let player = FakeLocalAudioPlayer()
+    let store = RendererPlaybackStore(discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController(),
+        localPlayer: player, pollingInterval: .seconds(60))
+    let id = UUID()
+    store.configureNormalization(features: [id: FeatureValues(values: ["integratedLUFS": -8, "truePeakDBTP": -1, "normalizationGainDB": -4])], enabled: true)
+    store.selectThisMac()
+    #expect(store.selectLibraryFile(URL(fileURLWithPath: "/tmp/normalization.mp3"), expectedDuration: 60, trackID: id))
+    await store.play()
+    #expect(abs(player.amplitude - Float(pow(10, -8.0 / 20))) < 0.00001)
+    store.configureNormalization(features: [:], enabled: false)
+    #expect(player.amplitude == 1)
+    store.shutdown()
+}
+
+@MainActor
 @Test func thisMacOutputUsesLocalPlayerAndPublishesPlaybackState() async {
     let localPlayer = FakeLocalAudioPlayer()
     localPlayer.duration = 123
@@ -284,6 +301,27 @@ import Testing
     #expect(store.devices[0].supportsAVTransport)
     store.selectDevice(store.devices[0].id)
     #expect(store.selectedDevice?.description?.connectionManager != nil)
+}
+
+@MainActor
+@Test func emptyListSelectionDoesNotClearSelectedRenderer() async {
+    let store = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: [sampleResponse()]),
+        descriptions: FakeDescriptions(renderer: sampleRenderer()),
+        fileSelection: FakeFileSelection(),
+        serverFactory: FakeServerFactory(),
+        controller: FakeController()
+    )
+
+    await store.discoverRenderers()
+    let selectedID = store.devices[0].id
+    store.selectDevice(selectedID)
+
+    store.selectDevice(nil)
+
+    #expect(store.selectedDeviceID == selectedID)
+    #expect(store.selectedDevice?.id == selectedID)
+    store.shutdown()
 }
 
 @MainActor
@@ -1098,11 +1136,15 @@ import Testing
         libraryFolderID: folder.id, relativePath: "available.mp3",
         url: root.appendingPathComponent("available.mp3"), title: "Available"
     )
+    let workBGM = Track(
+        libraryFolderID: folder.id, relativePath: "work.mp3",
+        url: root.appendingPathComponent("work.mp3"), title: "Work", genre: Track.workPlaybackGenre
+    )
     let missing = Track(
         libraryFolderID: folder.id, relativePath: "missing.mp3",
         url: root.appendingPathComponent("missing.mp3"), title: "Missing", scanState: .missing
     )
-    try await repository.applySuccessfulScan(folderID: folder.id, tracks: [available, missing], scannedAt: .now)
+    try await repository.applySuccessfulScan(folderID: folder.id, tracks: [available, workBGM, missing], scannedAt: .now)
     let playback = RendererPlaybackStore(
         discovery: FakeDiscovery(responses: []), descriptions: FakeDescriptions(renderer: sampleRenderer()),
         fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
@@ -1113,12 +1155,12 @@ import Testing
     let playlists = PlaylistStore(repository: repository, library: library, queue: queue, files: FakePlaylistFiles())
     await playlists.create(name: "Playable")
     let playlistID = try #require(playlists.selectedPlaylistID)
-    await playlists.add(trackIDs: [available.id, missing.id], to: playlistID)
+    await playlists.add(trackIDs: [available.id, workBGM.id, missing.id], to: playlistID)
     let playlist = try #require(playlists.selectedPlaylist)
 
     await playlists.play(playlist, shuffled: false)
 
-    #expect(queue.items.map(\.trackID) == [available.id])
+    #expect(queue.items.map(\.trackID) == [available.id, workBGM.id])
 }
 
 @MainActor
@@ -1194,16 +1236,19 @@ import Testing
     _ = listening
 
     await queue.playNow(trackIDs: tracks.map(\.id), source: .playlist)
-    await controller.setPosition(1); await playback.refreshState()
-    await controller.setPosition(2); await playback.refreshState()
+    for position in 0...35 {
+        queue.onTrackPosition?(Double(position))
+    }
     await queue.next()
-    await controller.setPosition(1); await playback.refreshState()
-    await controller.setPosition(2); await playback.refreshState()
+    for position in 0...35 {
+        queue.onTrackPosition?(Double(position))
+    }
     await queue.stop()
     try await Task.sleep(for: .milliseconds(50))
 
     let events = try await repository.loadMyMusicPlaybackEvents()
     #expect(events.count == 2)
+    guard events.count == 2 else { return }
     #expect(events[0].selectionType == MyMusicSelectionType.manual.rawValue)
     #expect(events[0].playSource == MyMusicPlaySource.playlist.rawValue)
     #expect(events[0].skipped)
@@ -1465,6 +1510,8 @@ private final class FakeLocalAudioPlayer: LocalAudioPlaying {
     var duration: TimeInterval = 0
     var playCount = 0
     var pauseCount = 0
+    var amplitude: Float = 1
+    func setAmplitude(_ value: Float) { amplitude = value }
 
     func load(fileURL: URL) throws { loadedURL = fileURL; position = 0 }
     func play() { playCount += 1 }
@@ -1621,4 +1668,36 @@ private final class NoopFolderChangeMonitor: FolderChangeMonitoring {
 private final class NoopSystemEventMonitor: SystemEventMonitoring {
     func start(_ handler: @escaping @MainActor (SystemPlaybackEvent) -> Void) {}
     func stop() {}
+}
+
+@MainActor
+@Test(arguments: [0, 29, 30, 31], [MyMusicPlaybackEndReason.stop, .naturalEnd])
+func macHistoryRequiresMoreThanThirtyListenedSeconds(seconds: Int, reason: MyMusicPlaybackEndReason) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("threshold.sqlite3"))
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
+    )
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(), repository: repository)
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    let listening = ListeningStore(repository: repository, library: library, queue: queue, myMusicRepository: repository)
+    queue.onTrackStarted?(UUID(), 100, .library, .manual)
+    queue.onTrackPosition?(0)
+    queue.onTrackPosition?(100) // Seeking forward is not listening time.
+    queue.onPlaybackStateChange?(.paused)
+    queue.onTrackPosition?(105)
+    queue.onPlaybackStateChange?(.playing)
+    for position in 0...seconds { queue.onTrackPosition?(Double(position)) }
+    await listening.flush()
+    #expect(try await repository.loadPlaybackEvents().count == (seconds > 30 ? 1 : 0))
+    queue.onTrackEnded?(reason)
+    await listening.flush()
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(listening.events.count == (seconds > 30 ? 1 : 0))
+    let exported = try await repository.loadMyMusicPlaybackEvents()
+    #expect(exported.count == (seconds > 30 ? 1 : 0))
+    if seconds > 30 { #expect(exported.first?.playDuration == Double(seconds)) }
 }

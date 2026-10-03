@@ -36,6 +36,10 @@ macOS Appと旧DLNA CLIは混同しない。分離理由は`decisions/0001-separ
 
 ## Change Rules
 
+MyMusicとの連携変更では、[共通データ交換・保全契約](docs/data-interchange-contract.md)を読む。別GitのMyMusic側の同契約とrevision・本文を照合し、未照合データ、競合、部分snapshotを削除扱いしない。文書の要件と実装済み保証を区別する。
+
+段階的な対策と未解決事項は[データ連携の保全課題](docs/data-interchange-issues.md)で管理する。
+
 - 要求範囲だけを小さく変更し、検索性だけを理由に大規模rename/refactorしない。
 - 変更前にdefinition、呼び出し元、呼び出し先、test、設定を確認する。
 - 既存のprotocol境界とsandbox制約を尊重する。

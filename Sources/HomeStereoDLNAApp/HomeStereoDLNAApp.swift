@@ -23,6 +23,7 @@ struct HomeStereoDLNAApp: App {
     @State private var myMusic: MyMusicTransferStore
     @State private var myMusicStatus: MyMusicStatusStore
     @State private var developer: MyMusicJSONEditorStore
+    @State private var features: TrackFeatureStore
     private let systemPlayback: SystemPlaybackIntegration
 
     private var selectedTheme: HomeStereoTheme {
@@ -33,6 +34,12 @@ struct HomeStereoDLNAApp: App {
         let repository: SQLiteLibraryRepository
         do { repository = try SQLiteLibraryRepository() }
         catch { fatalError("Library databaseを初期化できません: \(error.localizedDescription)") }
+        let featureStore: TrackFeatureStore
+        do {
+            featureStore = TrackFeatureStore(library: repository,
+                archive: FeatureRepository(url: try FeatureRepository.defaultURL()), files: MyMusicFileService())
+            _features = State(initialValue: featureStore)
+        } catch { fatalError("特徴量保存先を初期化できません: \(error.localizedDescription)") }
         let playback = RendererPlaybackStore(
             discovery: RendererDiscoveryService(), descriptions: DeviceDescriptionService(),
             fileSelection: MediaFileSelectionService(), serverFactory: LocalMediaHTTPServerFactory(),
@@ -42,9 +49,17 @@ struct HomeStereoDLNAApp: App {
         let libraryStore = LibraryStore(
             scanner: LibraryService(), folderAccess: FolderAccessService(), repository: repository
         )
+        featureStore.onPlaybackFeatures = { [weak playback] values, enabled in
+            playback?.configureNormalization(features: values, enabled: enabled)
+        }
         _store = State(initialValue: playback)
         _library = State(initialValue: libraryStore)
         let queueStore = QueueStore(repository: repository, library: libraryStore, playback: playback)
+        let previousTracksChanged = libraryStore.onTracksChanged
+        libraryStore.onTracksChanged = {
+            previousTracksChanged?()
+            Task { await featureStore.load() }
+        }
         _queue = State(initialValue: queueStore)
         let playlistStore = PlaylistStore(
             repository: repository, library: libraryStore, queue: queueStore, files: PlaylistFileService()
@@ -102,13 +117,13 @@ struct HomeStereoDLNAApp: App {
                     listening: listening, analytics: analytics, preferences: preferences,
                     genrePresets: genrePresets,
                     recovery: recovery, backup: backup, myMusic: myMusic,
-                    myMusicStatus: myMusicStatus, developer: developer
+                    myMusicStatus: myMusicStatus, features: features, developer: developer
                 )
                     .background(WindowFrameAutosave(name: "HomeStereo.MainWindow.CompactV1"))
             }
                 .task {
                     recovery.start(); await library.load(); await genrePresets.load(); await queue.restore(); await playlists.load()
-                    await listening.load(); await preferences.load(); await store.discoverRenderers()
+                    await listening.load(); await preferences.load(); await features.load(); await store.discoverRenderers()
                 }
                 .onDisappear { recovery.stop(); library.pauseMonitoring(); Task { await listening.flush() }; library.releasePlaybackAccess(); store.shutdown() }
                 .onChange(of: scenePhase) { _, phase in
@@ -118,7 +133,7 @@ struct HomeStereoDLNAApp: App {
         .defaultSize(width: 1_280, height: 760)
         Window("Mini Player", id: "mini-player") {
             HomeStereoThemeRoot(theme: selectedTheme) {
-                MiniPlayerView(playback: store, queue: queue, library: library)
+                MiniPlayerView(playback: store, queue: queue, preferences: preferences, library: library)
                     .background(WindowFrameAutosave(name: "HomeStereo.MiniPlayer"))
             }
         }
@@ -126,7 +141,7 @@ struct HomeStereoDLNAApp: App {
         .windowResizability(.contentMinSize)
         MenuBarExtra {
             HomeStereoThemeRoot(theme: selectedTheme) {
-                MenuBarPlaybackView(playback: store, queue: queue)
+                MenuBarPlaybackView(playback: store, queue: queue, preferences: preferences)
             }
         } label: {
             Label(queue.nowPlaying.title ?? "HomeStereo", systemImage: queue.nowPlaying.state == .playing ? "speaker.wave.2.fill" : "speaker")

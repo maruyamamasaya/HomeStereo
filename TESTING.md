@@ -23,11 +23,13 @@
 - 再接続時のPlay／SetVolume禁止、巨大埋め込みArtworkのdecode前拒否
 - 複数選択したQueue／Playlist参照の削除（音源は対象外）
 - 曲一覧の昇順／降順、ジャンル絞り込み、3万候補からの100曲キュー上限、キュー単項目移動、最近再生履歴の最新1件表示
+- 作業用BGMのgenre属性判定、genre「ハイレゾ」と最低条件44.1kHz／16bit＋24bit以上／48kHz超によるハイレゾ判定、通常の曲一覧から両分類を除外すること、filter後もAlbum／Artist参照を維持すること、通常曲と作業用BGMを同一Playlistへ追加できること
 - 同一path、rename、同一folder内移動、missing復帰、同サイズ別曲、曖昧metadata、参照ID維持
 - schema v5／v6／v7／v8／v9→v13 migration、拡張音源metadata round trip、path／Track ID transaction rollback
 - 実FLAC fixtureのVorbis Comment（基本情報、作曲者、曲／ディスク番号）読取とformat固有metadata正規化
 - MyMusic 4文書のversion、field名の`trackID`／`trackId`差、UTC日時、値域、重複ID、optional省略、内部交換model round-trip
 - MyMusic Track ID対応の再読込、再Import、fingerprint／曖昧metadata照合、Preferences merge／未解決報告、Mac側Favorite／Good／Badのdirty曲限定Canonical ID Export、Import時dirty解除、Preview世代token一致時だけ送信済み化、event重複排除／platform維持、transaction rollback
+- Mac生成の履歴と交換イベントについて0／29／30秒を除外し31秒を保存する境界、Stop／完走、pause／seek除外、途中flushも検証する
 - MyMusic実再生Sessionのpause／resume／seek、completed／skipped、selectionType、実Queue再生からSQLite保存、未連携eventの遅延解決export
 - ローカル分析のMyMusic集計済み再生回数（未紐付け曲を含む）優先、event fallback、完走／Early Skip境界、期間集計、ランキング、入口／選択種別、Good／Bad未設定の分離、曲一覧からのMyMusic互換`±1`累積と`-10...+10`境界保存、空／不明duration、event冪等保存と集計非重複、履歴reset時のMyMusic集計／Favorite／Preference／Playlist保持、Track削除後の未解決履歴、schema v12再起動復元
 - MyMusic手動Importの4文書Preview、Preferences差分Exportの対象件数／曲一覧Previewと保存成功後だけの解除、文書種別／version拒否、Preview／cancel非更新、確認後適用、二重操作防止、Previewから別Exportへの切替、適用後の画面Store再読込hook、曲単位のTrack ID／snapshot適用状況、event期間指定export／期間内未解決件数／空配列、既定file名、failed状態
@@ -40,7 +42,7 @@
 
 性能testは環境変数で明示実行する。2026-09-26に30,000曲fixtureを成功し、詳細は[`docs/performance.md`](docs/performance.md)へ記録した。
 
-2026-09-28時点で`./scripts/verify.sh`は成功。XCTest 97件中96件成功＋性能test 1件skip、Swift Testing 77件成功。macOS Debug build成功。
+2026-09-29時点で`./scripts/verify.sh`は成功。XCTest 98件中97件成功＋性能test 1件skip、Swift Testing 77件成功。macOS Debug build成功。
 
 macOS UIはKeyboard、VoiceOver、Light／Dark、Reduce Motion、狭いwindow、drag & dropをREADMEに沿って手動確認する。物理UI操作を実施していないrunでは自動test成功を手動確認済みとして扱わない。
 
@@ -55,3 +57,5 @@ READMEと[`docs/practical-audit-2026-09-24.md`](docs/practical-audit-2026-09-24.
 2026-09-25にピーク-50.5dBFSの4秒clickを10回再生し、Play送信差0msを10回、左右のHTTP取得と4秒完走を10回確認した。localhost Web UIは内蔵ブラウザで表示、Delay preset、1ms入力、click生成、status/log表示を確認した。AVFoundation録音入力が列挙されないため、音響offsetと10分driftは未評価のまま残す。
 
 2026-09-25に権限付きAUHAL probeでBlackHole 2ch（96kHz、2ch、512 frames）を確認し、2秒CLI captureと5秒Web UI captureから1秒単位の左右mono PCM WAVを生成した。入力は無音で左右とも-160dBFSだったため、L/R分離やAudio Hijack互換性は成功扱いにしない。WAVは`pcm_s16le`、96kHz、mono、1.000秒を`ffprobe`で確認した。
+
+特徴量実行の追加検証: `python3 -m unittest discover -s analyzer/tests -v`。実モデルとNSWorkspace起動の統合testは専用companion導入後、合成5秒音源を`HOMESTEREO_ANALYZER_SMOKE`で明示したときだけ実行する。通常testではskipし、個人音源の全曲解析は自動で起動しない。

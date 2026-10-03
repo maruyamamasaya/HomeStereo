@@ -6,9 +6,27 @@ import HomeStereoAppCore
 #endif
 import AppKit
 import Foundation
+import Observation
 import SwiftUI
 
 enum LibraryBrowseMode { case songs, albums, artists }
+
+enum LibraryTrackScope {
+    case all
+    case regular
+    case favorites
+    case workBGM
+    case highResolution
+
+    func includes(_ track: Track) -> Bool {
+        switch self {
+        case .all, .favorites: true
+        case .regular: track.isRegularLibraryTrack
+        case .workBGM: track.isEligibleForWorkPlayback
+        case .highResolution: track.isHighResolutionAudio
+        }
+    }
+}
 
 struct LibraryView: View {
     @Bindable var playback: RendererPlaybackStore
@@ -19,6 +37,7 @@ struct LibraryView: View {
     @Bindable var preferences: PlaybackPreferenceStore
     @Bindable var genrePresets: GenreDisplayPresetStore
     let mode: LibraryBrowseMode
+    var scope: LibraryTrackScope = .all
     @State private var searchPresented = false
     @AppStorage("library.songs.table-columns")
     private var songTableColumns = TableColumnCustomization<Track>()
@@ -27,13 +46,17 @@ struct LibraryView: View {
         NavigationStack {
             Group {
                 if library.tracks.isEmpty { emptyView }
+                else if mode == .songs, scope != .all, scopedTracks.isEmpty, normalizedSearch.isEmpty {
+                    scopedEmptyView
+                }
                 else if hasNoSearchResults { noSearchResultsView }
                 else {
                     switch mode {
                     case .songs: SongsTable(
                         playback: playback, library: library, queue: queue, playlists: playlists,
-                        listening: listening, preferences: preferences, tracks: library.visibleTracks,
-                        columnCustomization: $songTableColumns
+                        listening: listening, preferences: preferences, tracks: scopedTracks,
+                        columnCustomization: $songTableColumns,
+                        playSource: scope == .favorites ? .favorite : .library
                     )
                     case .albums: AlbumsList(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, albums: library.albums)
                     case .artists: ArtistsList(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, artists: library.artists)
@@ -156,7 +179,21 @@ struct LibraryView: View {
     }
 
     private var title: String {
-        switch mode { case .songs: "曲"; case .albums: "アルバム"; case .artists: "アーティスト" }
+        switch scope {
+        case .favorites: return "お気に入り"
+        case .regular: break
+        case .workBGM: return "作業用BGM"
+        case .highResolution: return "ハイレゾ"
+        case .all: break
+        }
+        return switch mode { case .songs: "曲"; case .albums: "アルバム"; case .artists: "アーティスト" }
+    }
+
+    private var scopedTracks: [Track] {
+        let favoriteIDs = scope == .favorites ? Set(listening.favorites.map(\.trackID)) : []
+        return library.visibleTracks.filter {
+            scope.includes($0) && (scope != .favorites || favoriteIDs.contains($0.id))
+        }
     }
 
     private var emptyView: some View {
@@ -173,6 +210,43 @@ struct LibraryView: View {
         ContentUnavailableView.search(text: normalizedSearch)
     }
 
+    private var scopedEmptyView: some View {
+        ContentUnavailableView {
+            Label(scopedEmptyTitle, systemImage: scopedEmptyIcon)
+        } description: {
+            Text(scopedEmptyDescription)
+        }
+    }
+
+    private var scopedEmptyTitle: String {
+        switch scope {
+        case .favorites: listening.favorites.isEmpty ? "お気に入りはありません" : "条件に一致するお気に入りはありません"
+        case .regular: "通常の曲はありません"
+        case .workBGM: "作業用BGMはありません"
+        case .highResolution: "ハイレゾ音源はありません"
+        case .all: "曲はありません"
+        }
+    }
+
+    private var scopedEmptyIcon: String {
+        switch scope {
+        case .favorites: "heart"
+        case .regular, .all: "music.note"
+        case .workBGM: "timer"
+        case .highResolution: "waveform"
+        }
+    }
+
+    private var scopedEmptyDescription: String {
+        switch scope {
+        case .favorites: "曲のハートボタンで追加できます。ジャンルで絞り込んでいる場合は「すべて」を選ぶと全件表示できます。"
+        case .regular: "作業用BGMとハイレゾ以外の曲がここに表示されます。"
+        case .workBGM: "ジャンルに「作業用BGM」が設定された曲がここに表示されます。"
+        case .highResolution: "ジャンルが「ハイレゾ」、または44.1kHz・16bit以上で24bit以上／48kHz超の音源が表示されます。"
+        case .all: "「フォルダ」からMac上の音楽フォルダを登録してください。"
+        }
+    }
+
     private var normalizedSearch: String {
         library.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -180,7 +254,7 @@ struct LibraryView: View {
     private var hasNoSearchResults: Bool {
         guard !normalizedSearch.isEmpty else { return false }
         switch mode {
-        case .songs: return library.totalFilteredTracks == 0
+        case .songs: return scopedTracks.isEmpty
         case .albums: return library.albums.isEmpty
         case .artists: return library.artists.isEmpty
         }
@@ -190,7 +264,7 @@ struct LibraryView: View {
         let count: Int
         let unit: String
         switch mode {
-        case .songs: count = library.totalFilteredTracks; unit = "曲"
+        case .songs: count = scopedTracks.count; unit = "曲"
         case .albums: count = library.albums.count; unit = "アルバム"
         case .artists: count = library.artists.count; unit = "組"
         }
@@ -216,6 +290,66 @@ struct LibraryView: View {
     }
 }
 
+// Keep a prepared permutation between renders. Work is explicit and off the main actor.
+@MainActor
+@Observable
+private final class RandomTrackDisplay {
+    private(set) var tracks: [Track]?
+    private(set) var isPreparing = false
+    private(set) var presentationID = UUID()
+    @ObservationIgnored private var task: Task<Void, Never>?
+
+    func randomize(_ source: [Track]) {
+        reset()
+        isPreparing = true
+        let generation = presentationID
+        task = Task { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) { source.shuffled() }
+            let result = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled, let self, self.presentationID == generation else { return }
+            self.tracks = result
+            self.isPreparing = false
+            self.presentationID = UUID()
+        }
+    }
+
+    func reset() {
+        task?.cancel()
+        task = nil
+        tracks = nil
+        isPreparing = false
+        presentationID = UUID()
+    }
+}
+
+private struct RandomTrackDisplayControls: View {
+    let display: RandomTrackDisplay
+    let tracks: [Track]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button("ランダム表示", systemImage: "shuffle") { display.randomize(tracks) }
+                .disabled(tracks.count < 2 || display.isPreparing)
+                .help("表示中の曲をランダムに並べ替えます")
+            if display.isPreparing {
+                ProgressView().controlSize(.small)
+                Text("並べ替え中…").font(.caption).foregroundStyle(.secondary)
+            }
+            if display.tracks != nil {
+                Button("元の順序に戻す", systemImage: "arrow.uturn.backward") { display.reset() }
+            }
+            Spacer(minLength: 0)
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 14).padding(.vertical, 7)
+        .homeStereoThemeBar()
+    }
+}
+
 private struct SongsTable: View {
     @Bindable var playback: RendererPlaybackStore
     @Bindable var library: LibraryStore
@@ -225,11 +359,14 @@ private struct SongsTable: View {
     @Bindable var preferences: PlaybackPreferenceStore
     let tracks: [Track]
     @Binding var columnCustomization: TableColumnCustomization<Track>
+    var playSource: MyMusicPlaySource = .library
+    @State private var randomDisplay = RandomTrackDisplay()
 
     var body: some View {
         VStack(spacing: 0) {
+            RandomTrackDisplayControls(display: randomDisplay, tracks: tracks)
             Table(
-                tracks,
+                randomDisplay.tracks ?? tracks,
                 selection: $library.selectedTrackIDs,
                 sortOrder: tableSortOrder,
                 columnCustomization: $columnCustomization
@@ -300,15 +437,20 @@ private struct SongsTable: View {
             }
             // AppKit can eagerly measure thousands of inserted rows when a narrow
             // filter is cleared. Replace the native table with the prepared result.
-            .id(library.browserPresentationID)
+            .id(library.browserPresentationID.uuidString + randomDisplay.presentationID.uuidString)
             .alternatingRowBackgrounds(.disabled)
         }
+        .onChange(of: library.browserPresentationID) { _, _ in randomDisplay.reset() }
+        .onChange(of: playSource == .favorite ? listening.favorites.map(\.trackID) : []) { _, _ in
+            randomDisplay.reset()
+        }
+        .onDisappear { randomDisplay.reset() }
     }
 
     private func play(_ track: Track) {
         guard track.scanState == .available else { return }
         Task {
-            await queue.playImmediately(trackID: track.id, source: .library)
+            await queue.playImmediately(trackID: track.id, source: playSource)
         }
     }
 
@@ -463,13 +605,15 @@ private struct SongsTable: View {
     private var tableSortOrder: Binding<[LibraryTrackComparator]> {
         Binding(
             get: {
-                [LibraryTrackComparator(
+                if randomDisplay.tracks != nil { return [] }
+                return [LibraryTrackComparator(
                     sort: library.sort,
                     order: library.sortDirection == .ascending ? .forward : .reverse
                 )]
             },
             set: { order in
                 guard let comparator = order.first else { return }
+                randomDisplay.reset()
                 library.setSort(
                     comparator.sort,
                     direction: comparator.order == .forward ? .ascending : .descending
@@ -622,19 +766,35 @@ private struct ArtistDetail: View {
     @Bindable var playlists: PlaylistStore
     @Bindable var listening: ListeningStore
 
+    @State private var randomDisplay = RandomTrackDisplay()
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 artistHeader
                 Divider()
-                ForEach(albumGroups) { group in
-                    albumSection(group)
-                    Divider().padding(.leading, 24)
+                RandomTrackDisplayControls(display: randomDisplay, tracks: artist.tracks)
+                if let tracks = randomDisplay.tracks {
+                    ForEach(tracks) { track in
+                        ArtistTrackRow(
+                            track: track, playback: playback, queue: queue,
+                            playlists: playlists, listening: listening
+                        )
+                        .padding(.horizontal, 24)
+                    }
+                } else {
+                    ForEach(albumGroups) { group in
+                        albumSection(group)
+                        Divider().padding(.leading, 24)
+                    }
                 }
             }
         }
         .navigationTitle(artist.name)
         .navigationSubtitle("アーティスト")
+        .onChange(of: artist.id) { _, _ in randomDisplay.reset() }
+        .onChange(of: library.revision) { _, _ in randomDisplay.reset() }
+        .onDisappear { randomDisplay.reset() }
     }
 
     private var artistHeader: some View {
@@ -821,6 +981,7 @@ private struct CollectionDetail: View {
     @Bindable var queue: QueueStore
     @Bindable var playlists: PlaylistStore
     @Bindable var listening: ListeningStore
+    @State private var randomDisplay = RandomTrackDisplay()
     @State private var selection = Set<Track.ID>()
 
     var body: some View {
@@ -829,7 +990,8 @@ private struct CollectionDetail: View {
                 albumHeader(artworkTrack)
                 Divider()
             }
-            List(tracks, selection: $selection) { track in
+            RandomTrackDisplayControls(display: randomDisplay, tracks: tracks)
+            List(randomDisplay.tracks ?? tracks, selection: $selection) { track in
                 HStack(spacing: 10) {
                     Text(track.trackNumber.map { String($0) } ?? "—")
                         .font(.caption.monospacedDigit())
@@ -864,7 +1026,10 @@ private struct CollectionDetail: View {
                 }
                 .draggable(TrackDragPayload.encode(selection.contains(track.id) ? tracks.map(\.id).filter { selection.contains($0) } : [track.id]))
             }
+            .id(randomDisplay.presentationID)
         }
+        .onChange(of: tracks) { _, _ in randomDisplay.reset() }
+        .onDisappear { randomDisplay.reset() }
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
     }
