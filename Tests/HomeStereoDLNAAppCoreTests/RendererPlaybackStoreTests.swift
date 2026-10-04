@@ -29,6 +29,11 @@ import Testing
         controller: FakeController()
     )
     #expect(store.stereoOutputQuality == .stable48kHz)
+    #expect(store.isThisMacSelected)
+    #expect(store.destination == .songs)
+    #expect(store.hasSelectedOutput)
+    #expect(store.canPlaySelectedOutput)
+    #expect(store.selectedOutputName == "このMac")
     store.shutdown()
 }
 
@@ -1700,4 +1705,89 @@ func macHistoryRequiresMoreThanThirtyListenedSeconds(seconds: Int, reason: MyMus
     let exported = try await repository.loadMyMusicPlaybackEvents()
     #expect(exported.count == (seconds > 30 ? 1 : 0))
     if seconds > 30 { #expect(exported.first?.playDuration == Double(seconds)) }
+}
+
+private struct QueueSeededGenerator: RandomNumberGenerator {
+    var state: UInt64 = 42
+    mutating func next() -> UInt64 {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        return state
+    }
+}
+
+@Test func queueSamplingDeduplicatesCapsAndKeepsSmallCollectionsInOrder() {
+    let ids = (0..<300).map { _ in UUID() }
+    var generator = QueueSeededGenerator()
+    #expect(QueueCandidateSelection.select([ids[0], ids[1], ids[0]], preferences: [:], limit: 100, using: &generator) == Array(ids.prefix(2)))
+    let selected = QueueCandidateSelection.select(ids + ids, preferences: [:], limit: 100, using: &generator)
+    #expect(selected.count == 100)
+    #expect(Set(selected).count == 100)
+    #expect(Set(selected).isSubset(of: Set(ids)))
+    #expect(QueueCandidateSelection.select(ids, preferences: [:], limit: 0, using: &generator).isEmpty)
+}
+
+@Test func queueSamplingFavorsGoodWithoutExcludingOtherTracks() {
+    let good = UUID(), neutral = UUID(), bad = UUID()
+    var generator = QueueSeededGenerator()
+    var counts: [UUID: Int] = [:]
+    for _ in 0..<3000 {
+        let selected = QueueCandidateSelection.select([good, neutral, bad], preferences: [good: 10, bad: -10], limit: 1, using: &generator)
+        counts[selected[0], default: 0] += 1
+    }
+    #expect(counts[good, default: 0] > counts[neutral, default: 0] * 5)
+    #expect(counts[neutral, default: 0] > 100)
+    #expect(counts[bad, default: 0] > 100)
+}
+
+@MainActor
+@Test func queueCreationAndClearPreserveActivePlaybackAndPersistReferences() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("create-queue.sqlite3"))
+    let folder = LibraryFolder(displayName: "Fixture", path: root.path)
+    try await repository.addFolder(folder, bookmarkData: Data("fixture".utf8))
+    let tracks = (0..<120).map { index in
+        try? Data().write(to: root.appendingPathComponent("\(index).mp3"))
+        return Track(libraryFolderID: folder.id, relativePath: "\(index).mp3", url: root.appendingPathComponent("\(index).mp3"), title: "Track \(index)", duration: 120)
+    }
+    let missing = Track(libraryFolderID: folder.id, relativePath: "missing.mp3", url: root.appendingPathComponent("missing.mp3"), title: "Missing", scanState: .missing)
+    try await repository.applySuccessfulScan(folderID: folder.id, tracks: tracks + [missing], scannedAt: .now)
+    let player = FakeLocalAudioPlayer()
+    let playback = RendererPlaybackStore(discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(), fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController(), localPlayer: player, pollingInterval: .seconds(60))
+    playback.selectThisMac()
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(root: root), repository: repository, changeMonitor: NoopFolderChangeMonitor(), lifecycleMonitor: NoopSystemEventMonitor(), changeDebounce: .zero)
+    await library.load()
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    await queue.createFromCandidates(trackIDs: [tracks[0].id, tracks[1].id, missing.id, UUID(), tracks[0].id])
+    #expect(queue.items.map(\.trackID) == [tracks[0].id, tracks[1].id])
+    #expect(player.playCount == 0)
+    await queue.play()
+    let currentID = queue.items[0].id
+    var ended = 0
+    queue.onTrackEnded = { _ in ended += 1 }
+    await queue.createFromCandidates(trackIDs: tracks.map(\.id))
+    #expect(queue.items.count == 100)
+    #expect(Set(queue.items.map(\.trackID)).count == 100)
+    #expect(queue.items[0].id == currentID)
+    #expect(player.playCount == 1)
+    #expect(playback.playbackState == .playing)
+    #expect(ended == 0)
+    #expect(try await repository.loadQueue().items == queue.items)
+    await queue.createFromCandidates(trackIDs: [tracks[0].id])
+    #expect(queue.items.count == 1)
+    #expect(queue.items[0].id == currentID)
+    #expect(player.playCount == 1)
+    queue.selectedItemIDs = Set(queue.items.map(\.id))
+    await queue.clear()
+    #expect(queue.items.isEmpty)
+    #expect(queue.currentIndex == nil)
+    #expect(queue.selectedItemIDs.isEmpty)
+    #expect(playback.playbackState == .playing)
+    #expect(ended == 0)
+    #expect(try await repository.loadQueue().items.isEmpty)
+    // A rebuilt queue after clearing an active track starts with its first candidate on completion.
+    await queue.createFromCandidates(trackIDs: [tracks[1].id, tracks[2].id])
+    #expect(queue.items.map(\.trackID) == [tracks[1].id, tracks[2].id])
+    playback.shutdown(); library.pauseMonitoring()
 }

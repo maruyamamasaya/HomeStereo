@@ -31,10 +31,10 @@ private struct StereoMediaCacheEntry {
 @MainActor
 @Observable
 public final class RendererPlaybackStore {
-    public var destination: DLNASidebarDestination = .devices
+    public var destination: DLNASidebarDestination = .songs
     public private(set) var devices: [RendererDevice] = []
     public var selectedDeviceID: String?
-    public private(set) var isThisMacSelected = false
+    public private(set) var isThisMacSelected = true
     public private(set) var media: LocalMediaResource?
     public private(set) var selectedLibraryTrackID: UUID?
     public private(set) var playbackState: RendererPlaybackState = .stopped

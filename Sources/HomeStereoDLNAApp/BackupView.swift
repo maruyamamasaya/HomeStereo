@@ -79,9 +79,13 @@ struct BackupView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("バックアップ")
-        .toolbar {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
             Button("バックアップを書き出す", systemImage: "square.and.arrow.up") { Task { await store.export() } }
             Button("バックアップから復元", systemImage: "square.and.arrow.down") { Task { await store.previewImport() } }
+
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
     }
 

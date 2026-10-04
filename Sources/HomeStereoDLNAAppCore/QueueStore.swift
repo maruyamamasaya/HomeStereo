@@ -174,6 +174,38 @@ public final class QueueStore {
         }
     }
 
+    /// Replaces the waiting queue without interrupting the current media.
+    public func createFromCandidates(trackIDs: [Track.ID]) async {
+        guard !isTransitioning else { return }
+        await withPlaybackTransition {
+            do {
+                let values = try await (repository as? any TrackPreferencePersisting)?.loadTrackPreferences() ?? []
+                let preferences = Dictionary(uniqueKeysWithValues: values.map { ($0.trackID, $0.playbackPreference) })
+                let active = playback.playbackState == .playing || playback.playbackState == .paused
+                let current = active && !currentWasRemoved && currentTrack?.id == playback.selectedLibraryTrackID
+                    ? snapshot.currentIndex.map { snapshot.items[$0] } : nil
+                let candidates = trackIDs.filter { id in
+                    id != (active ? playback.selectedLibraryTrackID : nil) && library.track(id: id)?.scanState == .available
+                }
+                guard !candidates.isEmpty || current.map({ trackIDs.contains($0.trackID) }) == true else { return }
+                var generator = SystemRandomNumberGenerator()
+                let selected = QueueCandidateSelection.select(
+                    candidates, preferences: preferences,
+                    limit: Self.maximumItemCount - (current == nil ? 0 : 1), using: &generator
+                )
+                snapshot.items = (current.map { [$0] } ?? []) + selected.map { QueueItem(trackID: $0) }
+                snapshot.currentIndex = 0
+                if current == nil { snapshot.position = 0 }
+                currentWasRemoved = active && current == nil
+                selectedItemIDs.removeAll()
+                currentPlaySource = .queue
+                errorMessage = nil
+                await persist()
+                scheduleNextStereoPrewarm()
+            } catch { errorMessage = error.localizedDescription }
+        }
+    }
+
     public func playNext(trackIDs: [Track.ID]) async {
         let additions = trackIDs.suffix(Self.maximumItemCount).map { QueueItem(trackID: $0) }
         guard !additions.isEmpty else { return }
@@ -289,7 +321,8 @@ public final class QueueStore {
     }
 
     public func clear() async {
-        onTrackEnded?(.queueReplacement)
+        guard !isTransitioning else { return }
+        stereoPrewarmTask?.cancel()
         snapshot.items = []
         snapshot.currentIndex = nil
         snapshot.position = 0
@@ -505,5 +538,23 @@ public final class QueueStore {
     private func persist() async {
         do { try await repository.saveQueue(snapshot) }
         catch { errorMessage = error.localizedDescription }
+    }
+}
+
+/// Weighted sampling without replacement. Small collections retain their displayed order.
+public enum QueueCandidateSelection {
+    public static func select<R: RandomNumberGenerator>(
+        _ trackIDs: [Track.ID], preferences: [Track.ID: Int], limit: Int, using generator: inout R
+    ) -> [Track.ID] {
+        guard limit > 0 else { return [] }
+        var seen = Set<Track.ID>()
+        let unique = trackIDs.filter { seen.insert($0).inserted }
+        guard unique.count > limit else { return unique }
+        // Exponential races give each track a probability proportional to its positive weight.
+        return unique.map { id in
+            let weight = Double(1 + max(0, min(10, preferences[id] ?? 0)))
+            let draw = Double.random(in: Double.leastNonzeroMagnitude...1, using: &generator)
+            return (id: id, key: -log(draw) / weight)
+        }.sorted { $0.key < $1.key }.prefix(limit).map(\.id)
     }
 }

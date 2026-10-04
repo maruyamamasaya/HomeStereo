@@ -1,5 +1,11 @@
 import Foundation
 
+public enum FeatureAnalysisConcurrency: Int, CaseIterable, Sendable {
+    case two = 2
+    case three = 3
+    case six = 6
+}
+
 public enum FeatureAnalysisMode: String, Sendable {
     case missing, loudness, update
 }

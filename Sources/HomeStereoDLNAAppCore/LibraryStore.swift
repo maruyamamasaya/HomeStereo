@@ -299,7 +299,7 @@ public final class LibraryStore {
         guard sort != selectedSort || sortDirection != direction else { return }
         sort = selectedSort
         sortDirection = direction
-        scheduleBrowserRebuild(immediate: true, buildCollections: false)
+        scheduleBrowserRebuild(immediate: true)
     }
 
     public func applyGenrePreset(_ preset: GenreDisplayPreset?) {
@@ -307,7 +307,7 @@ public final class LibraryStore {
         selectedGenre = nil
         presetGenreNames = preset.map { Set($0.displayGenreNames) }
         presetIncludesUnassigned = preset?.includesUnassignedGenre ?? false
-        scheduleBrowserRebuild(immediate: true, buildCollections: false)
+        scheduleBrowserRebuild(immediate: true)
     }
 
     public func applySingleGenre(_ genre: String?) {
@@ -315,7 +315,7 @@ public final class LibraryStore {
         presetGenreNames = nil
         presetIncludesUnassigned = false
         selectedGenre = genre
-        scheduleBrowserRebuild(immediate: true, buildCollections: false)
+        scheduleBrowserRebuild(immediate: true)
     }
 
     private func show(_ error: Error) {

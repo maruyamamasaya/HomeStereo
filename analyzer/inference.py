@@ -33,7 +33,7 @@ class Inference:
             self.labels[group] = metadata['classes']
             if group not in ('discogs','tags','mood') and metadata['inference']['embedding_model']['model_name'] != 'discogs-effnet-bs64-1':
                 raise ValueError('Incompatible head embedding')
-            options = ort.SessionOptions(); options.intra_op_num_threads=2; options.inter_op_num_threads=1
+            options = ort.SessionOptions(); options.intra_op_num_threads=1; options.inter_op_num_threads=1
             options.execution_mode=ort.ExecutionMode.ORT_SEQUENTIAL
             self.sessions[group]=ort.InferenceSession(str(Path(model_dir)/f'{prefix}.onnx'),options,providers=['CPUExecutionProvider'])
             if self.sessions[group].get_outputs()[0].shape[-1] != len(self.labels[group]):
@@ -50,7 +50,7 @@ class Inference:
         if not 1<=channels<=8 or not 8000<=rate<=192000: raise ValueError('Unsupported audio format')
         totals={key:np.zeros(len(labels),dtype=np.float64) for key,labels in self.labels.items()}; count=0
         for offset in _segment_offsets(duration,30.,3):
-            decoded=subprocess.run([self.ffmpeg,'-v','error','-nostdin','-threads','1','-ss',str(offset),'-i',str(path),'-t',str(min(30.,duration-offset)),'-map','0:a:0','-vn','-ac',str(channels),'-ar',str(rate),'-f','f32le','pipe:1'],capture_output=True,timeout=120,check=True)
+            decoded=subprocess.run([self.ffmpeg,'-v','error','-nostdin','-threads','1','-filter_threads','1','-ss',str(offset),'-i',str(path),'-t',str(min(30.,duration-offset)),'-map','0:a:0','-vn','-ac',str(channels),'-ar',str(rate),'-f','f32le','pipe:1'],capture_output=True,timeout=120,check=True)
             mono=average_channels(decoded.stdout,channels)
             y22=librosa.resample(mono,orig_sr=rate,target_sr=22050,res_type='soxr_hq')
             y16=librosa.resample(y22,orig_sr=22050,target_sr=16000,res_type='soxr_hq')

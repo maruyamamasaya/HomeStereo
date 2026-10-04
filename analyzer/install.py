@@ -81,6 +81,9 @@ final class Launcher: NSObject, NSApplicationDelegate {
         var environment = ProcessInfo.processInfo.environment
         environment["HOMESTEREO_ANALYZER_HOME"] = support
         environment["ORT_DISABLE_TELEMETRY"] = "1"
+        environment["OPENBLAS_NUM_THREADS"] = "1"
+        environment["OMP_NUM_THREADS"] = "1"
+        environment["VECLIB_MAXIMUM_THREADS"] = "1"
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         environment["NUMBA_CACHE_DIR"] = support + "/numba-cache"
         process.environment = environment

@@ -31,13 +31,17 @@ struct GenreDisplayPresetsView: View {
             }
         }
         .navigationTitle("ジャンルプリセット")
-        .toolbar {
-            ToolbarItemGroup {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+            Group {
                 Button("読み込む", systemImage: "square.and.arrow.down") { Task { await store.importJSON() } }
                 Button("書き出す", systemImage: "square.and.arrow.up") { Task { await store.exportJSON() } }
                     .disabled(store.presets.isEmpty)
                 Button("新規作成", systemImage: "plus") { editor = PresetDraft() }
             }
+
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
         .disabled(store.isBusy)
         .overlay { if store.isBusy { ProgressView().controlSize(.large) } }

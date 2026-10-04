@@ -93,3 +93,42 @@ private final class TestFolderAccess: FolderAccessServicing {
     func beginAccessing(_ folder: URL) -> Bool { true }
     func stopAccessing(_ folder: URL) {}
 }
+
+@MainActor
+@Test func genrePresetAndRapidSortRefreshAllBrowserCollectionsTogether() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("genre.sqlite3"))
+    let folder = LibraryFolder(displayName: "Fixture", path: root.path)
+    try await repository.addFolder(folder, bookmarkData: Data([1]))
+    let jazz = Track(libraryFolderID: folder.id, relativePath: "jazz.mp3", url: root.appendingPathComponent("jazz.mp3"), title: "Jazz", artist: "Jazz Artist", album: "Jazz Album", genre: "Jazz")
+    let rock = Track(libraryFolderID: folder.id, relativePath: "rock.mp3", url: root.appendingPathComponent("rock.mp3"), title: "Rock", artist: "Rock Artist", album: "Rock Album", genre: "Rock")
+    try await repository.applySuccessfulScan(folderID: folder.id, tracks: [jazz, rock], scannedAt: .now)
+    let store = LibraryStore(scanner: CountingScanner(), folderAccess: TestFolderAccess(url: root), repository: repository, changeMonitor: TestFolderMonitor(), lifecycleMonitor: TestSystemMonitor(), changeDebounce: .zero)
+    defer { store.pauseMonitoring() }
+    await store.load()
+    store.applyGenrePreset(GenreDisplayPreset(name: "Jazz", enabledGenreNames: ["Jazz"]))
+    store.setSort(.artist, direction: .descending)
+    for _ in 0..<100 {
+        if store.visibleTracks.map(\.id) == [jazz.id] && store.albums.map(\.title) == ["Jazz Album"] { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(store.visibleTracks.map(\.id) == [jazz.id])
+    #expect(store.albums.flatMap { $0.tracks.map(\.id) } == [jazz.id])
+    #expect(store.artists.flatMap { $0.tracks.map(\.id) } == [jazz.id])
+    store.applySingleGenre("Rock")
+    for _ in 0..<100 {
+        if store.visibleTracks.map(\.id) == [rock.id] && store.albums.map(\.title) == ["Rock Album"] { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(store.artists.map(\.name) == ["Rock Artist"])
+    store.applyGenrePreset(nil)
+    for _ in 0..<100 {
+        if store.visibleTracks.count == 2 && store.albums.count == 2 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(store.visibleTracks.count == 2)
+    #expect(store.albums.count == 2)
+    #expect(store.artists.count == 2)
+}

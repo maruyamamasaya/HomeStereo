@@ -38,6 +38,8 @@ struct LibraryView: View {
     @Bindable var genrePresets: GenreDisplayPresetStore
     let mode: LibraryBrowseMode
     var scope: LibraryTrackScope = .all
+    @AppStorage("library.artists.hide-single-track") private var hidesSingleTrackArtists = false
+    @AppStorage("library.albums.hide-single-track") private var hidesSingleTrackAlbums = false
     @State private var searchPresented = false
     @AppStorage("library.songs.table-columns")
     private var songTableColumns = TableColumnCustomization<Track>()
@@ -49,7 +51,17 @@ struct LibraryView: View {
                 else if mode == .songs, scope != .all, scopedTracks.isEmpty, normalizedSearch.isEmpty {
                     scopedEmptyView
                 }
+                else if mode == .albums, hidesSingleTrackAlbums, displayedAlbums.isEmpty, !library.albums.isEmpty {
+                    singleTrackAlbumsEmptyView
+                }
+                else if mode == .artists, hidesSingleTrackArtists, displayedArtists.isEmpty, !library.artists.isEmpty {
+                    singleTrackArtistsEmptyView
+                }
                 else if hasNoSearchResults { noSearchResultsView }
+                else if library.visibleTracks.isEmpty { noGenreResultsView }
+                else if (mode == .albums && displayedAlbums.isEmpty) || (mode == .artists && displayedArtists.isEmpty) {
+                    ContentUnavailableView("表示する項目がありません", systemImage: "music.note", description: Text("アルバム・アーティストには通常曲だけを表示します。作業用BGMとハイレゾは専用の曲一覧から確認できます。"))
+                }
                 else {
                     switch mode {
                     case .songs: SongsTable(
@@ -58,8 +70,8 @@ struct LibraryView: View {
                         columnCustomization: $songTableColumns,
                         playSource: scope == .favorites ? .favorite : .library
                     )
-                    case .albums: AlbumsList(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, albums: library.albums)
-                    case .artists: ArtistsList(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, artists: library.artists)
+                    case .albums: AlbumsList(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, albums: displayedAlbums)
+                    case .artists: ArtistsList(playback: playback, library: library, queue: queue, playlists: playlists, listening: listening, artists: displayedArtists)
                     }
                 }
             }
@@ -83,7 +95,7 @@ struct LibraryView: View {
                         Divider()
                     }
                     if !library.tracks.isEmpty {
-                        if mode == .songs, !genrePresets.presets.isEmpty {
+                        if !genrePresets.presets.isEmpty {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 7) {
                                     presetTag("すべて", selected: library.selectedGenrePresetID == nil && library.selectedGenre == nil) {
@@ -107,7 +119,7 @@ struct LibraryView: View {
                         HStack {
                             Text(resultSummary).font(.caption).foregroundStyle(.secondary)
                             Spacer()
-                            if mode == .songs, !library.genres.isEmpty {
+                            if !library.genres.isEmpty {
                                 Menu {
                                     Button {
                                         library.applySingleGenre(nil)
@@ -137,6 +149,16 @@ struct LibraryView: View {
                                 .fixedSize()
                                 .help("曲一覧をジャンルで絞り込み")
                             }
+                            if mode == .albums {
+                                Toggle("1曲のアルバムを隠す", isOn: $hidesSingleTrackAlbums)
+                                    .toggleStyle(.button)
+                                    .help("表示中の収録曲が1曲のアルバムを非表示にします。音源データは変更しません。")
+                            }
+                            if mode == .artists {
+                                Toggle("1曲のアーティストを隠す", isOn: $hidesSingleTrackArtists)
+                                    .toggleStyle(.button)
+                                    .help("表示中の曲が1曲のアーティストを非表示にします。音源データは変更しません。")
+                            }
                             if mode == .songs {
                                 Menu("表示項目", systemImage: "tablecells") {
                                     Toggle("音質", isOn: columnVisibilityBinding("audioQuality"))
@@ -159,6 +181,13 @@ struct LibraryView: View {
                 }
                 .homeStereoThemeBar()
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                CreateQueueButton(queue: queue, trackIDs: queueCandidateIDs)
+
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
+        }
             .alert("評価を保存できませんでした", isPresented: preferenceErrorPresented) {
                 Button("OK") { preferences.dismissError() }
             } message: {
@@ -196,6 +225,42 @@ struct LibraryView: View {
         }
     }
 
+    private var displayedAlbums: [LibraryAlbum] {
+        hidesSingleTrackAlbums ? library.albums.filter { $0.tracks.count > 1 } : library.albums
+    }
+
+    private var singleTrackAlbumsEmptyView: some View {
+        ContentUnavailableView {
+            Label("表示するアルバムがありません", systemImage: "square.stack")
+        } description: {
+            Text("「1曲のアルバムを隠す」が有効です。ジャンルの絞り込み後の収録曲数で判定します。")
+        } actions: {
+            Button("1曲のアルバムも表示") { hidesSingleTrackAlbums = false }
+        }
+    }
+
+    private var displayedArtists: [LibraryArtist] {
+        hidesSingleTrackArtists ? library.artists.filter { $0.tracks.count > 1 } : library.artists
+    }
+
+    private var singleTrackArtistsEmptyView: some View {
+        ContentUnavailableView {
+            Label("表示するアーティストがありません", systemImage: "music.mic")
+        } description: {
+            Text("「1曲のアーティストを隠す」が有効です。通常曲・ジャンルの絞り込み後の曲数で判定します。")
+        } actions: {
+            Button("1曲のアーティストも表示") { hidesSingleTrackArtists = false }
+        }
+    }
+
+    private var queueCandidateIDs: [Track.ID] {
+        switch mode {
+        case .songs: scopedTracks.map(\.id)
+        case .albums: displayedAlbums.flatMap { $0.tracks.map(\.id) }
+        case .artists: displayedArtists.flatMap { $0.tracks.map(\.id) }
+        }
+    }
+
     private var emptyView: some View {
         ContentUnavailableView {
             Label("ライブラリは空です", systemImage: "music.note.list")
@@ -208,6 +273,16 @@ struct LibraryView: View {
 
     private var noSearchResultsView: some View {
         ContentUnavailableView.search(text: normalizedSearch)
+    }
+
+    private var noGenreResultsView: some View {
+        ContentUnavailableView {
+            Label("ジャンルに合う曲がありません", systemImage: "line.3.horizontal.decrease.circle")
+        } description: {
+            Text("プリセットやジャンルを変更するか、「すべて」を選んでください。")
+        } actions: {
+            Button("すべてのジャンルを表示") { library.applyGenrePreset(nil) }
+        }
     }
 
     private var scopedEmptyView: some View {
@@ -255,8 +330,8 @@ struct LibraryView: View {
         guard !normalizedSearch.isEmpty else { return false }
         switch mode {
         case .songs: return scopedTracks.isEmpty
-        case .albums: return library.albums.isEmpty
-        case .artists: return library.artists.isEmpty
+        case .albums: return displayedAlbums.isEmpty
+        case .artists: return displayedArtists.isEmpty
         }
     }
 
@@ -265,11 +340,11 @@ struct LibraryView: View {
         let unit: String
         switch mode {
         case .songs: count = scopedTracks.count; unit = "曲"
-        case .albums: count = library.albums.count; unit = "アルバム"
-        case .artists: count = library.artists.count; unit = "組"
+        case .albums: count = displayedAlbums.count; unit = "アルバム"
+        case .artists: count = displayedArtists.count; unit = "組"
         }
         let presetName = genrePresets.presets.first { $0.id == library.selectedGenrePresetID }?.name
-        let genrePrefix = mode == .songs ? (presetName ?? library.selectedGenre).map { "\($0) · " } ?? "" : ""
+        let genrePrefix = (presetName ?? library.selectedGenre).map { "\($0) · " } ?? ""
         return normalizedSearch.isEmpty
             ? "\(genrePrefix)\(count)\(unit)"
             : "\(genrePrefix)「\(normalizedSearch)」の検索結果：\(count)\(unit)"
@@ -651,7 +726,7 @@ private struct AlbumsList: View {
                             Text(album.title)
                                 .font(.headline)
                                 .lineLimit(2)
-                            Text(album.albumArtist ?? "不明なアーティスト")
+                            Text(albumArtistLabel(album))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -670,7 +745,7 @@ private struct AlbumsList: View {
                     }
                     .draggable(TrackDragPayload.encode(album.tracks.map(\.id)))
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(album.title)、\(album.albumArtist ?? "不明なアーティスト")、\(album.tracks.count)曲")
+                    .accessibilityLabel("\(album.title)、\(albumArtistLabel(album))、\(album.tracks.count)曲")
                 }
             }
             .padding(24)
@@ -678,13 +753,20 @@ private struct AlbumsList: View {
         .navigationDestination(for: LibraryAlbum.ID.self) { id in
             if let album = library.albums.first(where: { $0.id == id }) {
                 CollectionDetail(
-                    title: album.title, subtitle: album.albumArtist ?? "不明なアルバムアーティスト",
+                    title: album.title, subtitle: albumArtistLabel(album),
                     tracks: album.tracks, artworkTrack: album.tracks.first,
                     playback: playback, library: library, queue: queue, playlists: playlists, listening: listening
                 )
             }
         }
     }
+}
+
+private func albumArtistLabel(_ album: LibraryAlbum) -> String {
+    if let albumArtist = album.albumArtist { return albumArtist }
+    let artists = Set(album.tracks.compactMap(\.artist))
+    if artists.count > 1 { return "複数のアーティスト" }
+    return artists.first ?? "不明なアーティスト"
 }
 
 private struct ArtistsList: View {
@@ -751,7 +833,7 @@ private struct ArtistsList: View {
     private func albumCount(for artist: LibraryArtist) -> Int {
         Set(artist.tracks.map { track in
             LibraryAlbum.ID(
-                albumArtist: track.albumArtist?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                albumArtist: nil,
                 title: track.album?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "アルバム未設定"
             )
         }).count
@@ -789,6 +871,11 @@ private struct ArtistDetail: View {
                     }
                 }
             }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {  CreateQueueButton(queue: queue, trackIDs: artist.tracks.map(\.id))
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
         .navigationTitle(artist.name)
         .navigationSubtitle("アーティスト")
@@ -882,7 +969,7 @@ private struct ArtistDetail: View {
 
     private func albumID(for track: Track) -> LibraryAlbum.ID {
         LibraryAlbum.ID(
-            albumArtist: track.albumArtist?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            albumArtist: nil,
             title: track.album?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "アルバム未設定"
         )
     }
@@ -1031,6 +1118,11 @@ private struct CollectionDetail: View {
         .onChange(of: tracks) { _, _ in randomDisplay.reset() }
         .onDisappear { randomDisplay.reset() }
         .navigationTitle(title)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {  CreateQueueButton(queue: queue, trackIDs: tracks.map(\.id))
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
+        }
         .navigationSubtitle(subtitle)
     }
 
@@ -1203,10 +1295,14 @@ struct LibraryFoldersView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("音楽フォルダ")
-        .toolbar {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
             Button("フォルダを追加", systemImage: "folder.badge.plus") { Task { await library.addFolder() } }
             Button("すべて再スキャン", systemImage: "arrow.clockwise") { Task { await library.scanAll() } }.disabled(library.folders.isEmpty || library.scanningFolderID != nil)
                 .help(library.folders.isEmpty ? "先に音楽フォルダを追加してください" : "登録したすべてのフォルダを更新します")
+
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
         .confirmationDialog("音楽フォルダの登録を解除しますか？", isPresented: Binding(
             get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }
@@ -1330,4 +1426,17 @@ private func formatAudioQuality(_ track: Track) -> String {
         track.sampleRate.map { formatSampleRate($0) },
     ].compactMap { $0 }
     return values.isEmpty ? "—" : values.joined(separator: " · ")
+}
+
+struct CreateQueueButton: View {
+    @Bindable var queue: QueueStore
+    let trackIDs: [Track.ID]
+
+    var body: some View {
+        Button("最大100曲でキュー作成", systemImage: "text.badge.plus") {
+            Task { await queue.createFromCandidates(trackIDs: trackIDs) }
+        }
+        .disabled(trackIDs.isEmpty || queue.isTransitioning)
+        .help("表示中の曲から待ち曲を作り直します。再生中の曲は続け、合計100曲以内。候補が多い場合はGood評価が高い曲ほど抽選で選ばれやすくなります。")
+    }
 }

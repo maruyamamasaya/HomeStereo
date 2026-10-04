@@ -37,22 +37,19 @@ struct DLNAContentView: View {
                         Label("曲", systemImage: "music.note").tag(DLNASidebarDestination.songs)
                         Label("アルバム", systemImage: "square.stack").tag(DLNASidebarDestination.albums)
                         Label("アーティスト", systemImage: "music.mic").tag(DLNASidebarDestination.artists)
+                        Label("作業用BGM", systemImage: "timer").tag(DLNASidebarDestination.workBGM)
+                        Label("ハイレゾ", systemImage: "waveform.badge.magnifyingglass").tag(DLNASidebarDestination.highResolution)
                     } header: {
                         sidebarSectionHeader("ライブラリ")
                     }
                     Section {
-                        Label("音楽特徴量", systemImage: "waveform.path").tag(DLNASidebarDestination.features)
-                        Label("作業用BGM", systemImage: "timer").tag(DLNASidebarDestination.workBGM)
-                        Label("ハイレゾ", systemImage: "waveform.badge.magnifyingglass").tag(DLNASidebarDestination.highResolution)
+                        Label("プレイリスト", systemImage: "music.note.list").tag(DLNASidebarDestination.playlists)
                     } header: {
-                        sidebarSectionHeader("音源の特性")
+                        sidebarSectionHeader("プレイリスト")
                     }
                     Section {
                         Label("お気に入り", systemImage: "heart").tag(DLNASidebarDestination.favorites)
                         Label("履歴", systemImage: "clock.arrow.circlepath").tag(DLNASidebarDestination.history)
-                        Label("分析", systemImage: "chart.bar.xaxis").tag(DLNASidebarDestination.analytics)
-                        Label("ジャンルプリセット", systemImage: "tag").tag(DLNASidebarDestination.genrePresets)
-                        Label("プレイリスト", systemImage: "music.note.list").tag(DLNASidebarDestination.playlists)
                     } header: {
                         sidebarSectionHeader("コレクション")
                     }
@@ -65,12 +62,23 @@ struct DLNAContentView: View {
                     }
                     Section {
                         Label("フォルダ", systemImage: "folder").tag(DLNASidebarDestination.folders)
+                        Label("音楽特徴量", systemImage: "waveform.path").tag(DLNASidebarDestination.features)
+                        Label("分析", systemImage: "chart.bar.xaxis").tag(DLNASidebarDestination.analytics)
                         Label("バックアップ", systemImage: "externaldrive").tag(DLNASidebarDestination.backup)
+                    } header: {
+                        sidebarSectionHeader("管理")
+                    }
+                    Section {
+                        Label("ジャンルプリセット", systemImage: "tag").tag(DLNASidebarDestination.genrePresets)
+                    } header: {
+                        sidebarSectionHeader("設定")
+                    }
+                    Section {
                         Label("MyMusic連携", systemImage: "arrow.left.arrow.right.circle").tag(DLNASidebarDestination.myMusic)
                         Label("MyMusic適用状況", systemImage: "checklist.checked").tag(DLNASidebarDestination.myMusicStatus)
                         Label("開発者", systemImage: "hammer").tag(DLNASidebarDestination.developer)
                     } header: {
-                        sidebarSectionHeader("管理")
+                        sidebarSectionHeader("MyMusic連携")
                     }
                 }
                 .listStyle(.sidebar)
@@ -103,13 +111,13 @@ struct DLNAContentView: View {
                             genrePresets: genrePresets, mode: .history
                         )
                     case .analytics:
-                        AnalyticsView(playback: store, queue: queue, library: library, store: analytics)
+                        AnalyticsView(playback: store, queue: queue, library: library, store: analytics, features: features)
                     case .genrePresets: GenreDisplayPresetsView(store: genrePresets, library: library)
                     case .backup: BackupView(store: backup)
-                    case .myMusic: MyMusicTransferView(store: myMusic)
+                    case .myMusic: MyMusicTransferView(store: myMusic, features: features)
                     case .myMusicStatus: MyMusicStatusView(store: myMusicStatus)
                     case .features: TrackFeatureView(store: features)
-                    case .developer: MyMusicJSONEditorView(store: developer)
+                    case .developer: MyMusicJSONEditorView(store: developer, features: features)
                     case .playback: PlaybackView(store: store, queue: queue, library: library)
                     }
                 }
@@ -121,7 +129,7 @@ struct DLNAContentView: View {
                 PlaybackErrorBanner(store: store, error: error)
                 Divider()
             }
-            MainNowPlayingBar(store: store, library: library, queue: queue, listening: listening, preferences: preferences)
+            MainNowPlayingBar(store: store, library: library, queue: queue, listening: listening, preferences: preferences, playlists: playlists)
             if recovery.state != .connected {
                 Divider()
                 HStack {
@@ -238,6 +246,10 @@ private struct MainNowPlayingBar: View {
     @Bindable var queue: QueueStore
     @Bindable var listening: ListeningStore
     @Bindable var preferences: PlaybackPreferenceStore
+    @Bindable var playlists: PlaylistStore
+    @State private var showsTrackDetail = false
+    @State private var showsPlaylistPicker = false
+    @State private var playlistError: String?
     @Environment(\.homeStereoTheme) private var theme
     @State private var pendingSeek: Double = 0
     @State private var isSeeking = false
@@ -246,7 +258,7 @@ private struct MainNowPlayingBar: View {
     var body: some View {
         ViewThatFits(in: .horizontal) {
             regularLayout
-                .frame(minWidth: 820)
+                .frame(minWidth: 1050)
             compactLayout
         }
         .padding(.horizontal, 14)
@@ -264,6 +276,9 @@ private struct MainNowPlayingBar: View {
             }
         }
         .accessibilityElement(children: .contain)
+        .alert("プレイリストに追加できませんでした", isPresented: Binding(get: { playlistError != nil }, set: { if !$0 { playlistError = nil } })) {
+            Button("閉じる") { playlistError = nil }
+        } message: { Text(playlistError ?? "") }
         .onAppear {
             synchronizePendingSeek(nowPlaying.elapsed)
             pendingVolume = store.volume
@@ -283,7 +298,6 @@ private struct MainNowPlayingBar: View {
 
                 HStack(spacing: 14) {
                     playbackStatus(showsVolume: true)
-                    NowPlayingPreferenceControls(queue: queue, preferences: preferences)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -303,39 +317,46 @@ private struct MainNowPlayingBar: View {
                 Spacer()
                 playbackControls
                 Spacer()
-                audioLevelControls
-                NowPlayingPreferenceControls(queue: queue, preferences: preferences)
             }
+            HStack { Spacer(); audioLevelControls }
         }
     }
 
     private var trackSummary: some View {
-        HStack(spacing: 10) {
-            if let track = queue.nowPlayingTrack {
-                CachedArtwork(track: track, library: library, size: 44)
-            } else {
-                Image(systemName: "music.note")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, height: 44)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .accessibilityLabel("Artworkなし")
+        Button {
+            store.destination = .playback
+        } label: {
+            HStack(spacing: 10) {
+                if let track = queue.nowPlayingTrack {
+                    CachedArtwork(track: track, library: library, size: 44)
+                } else {
+                    Image(systemName: "music.note")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .accessibilityLabel("Artworkなし")
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(nowPlaying.title ?? emptyTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(trackSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(nowPlaying.title ?? emptyTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(trackSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help("再生中の画面を開く")
+        .accessibilityHint("ジャケットと再生操作を大きく表示します")
     }
 
     private var playbackControls: some View {
-        HStack(spacing: 12) {
-            QueueModeControls(queue: queue)
+        HStack(spacing: 8) {
+            QueueModeControls(queue: queue, largeButtons: true)
             if store.isSonyStereoSelected {
                 Button(
                     store.isStereoSynchronizationCheckActive ? "同期チェック中" : "遅延チェック",
@@ -359,8 +380,7 @@ private struct MainNowPlayingBar: View {
             Button(nowPlaying.state == .playing ? "一時停止" : "再生", systemImage: nowPlaying.state == .playing ? "pause.fill" : "play.fill") {
                 Task { await queue.togglePlayback() }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.accentColor)
+            .buttonStyle(PlaybackBarButtonStyle(prominent: true))
             .disabled(playbackDisabledReason != nil)
             .help(playbackDisabledReason ?? (nowPlaying.state == .playing ? "再生を一時停止" : "選択した曲を再生"))
             Button("次の曲", systemImage: "forward.fill") { Task { await queue.next() } }
@@ -373,9 +393,79 @@ private struct MainNowPlayingBar: View {
             .disabled(queue.nowPlayingTrack == nil)
             .help(favoriteButtonHelp)
             .accessibilityValue(isFavorite ? "お気に入り" : "お気に入りではありません")
+            NowPlayingPreferenceControls(queue: queue, preferences: preferences, buttonSize: 44)
+            playlistMenu
+            Button("曲の詳細情報", systemImage: "info.circle") { showsTrackDetail = true }
+                .disabled(queue.nowPlayingTrack == nil)
+                .help("再生中の曲の情報を表示")
+                .popover(isPresented: $showsTrackDetail) { trackDetail }
+
         }
         .labelStyle(.iconOnly)
+        .buttonStyle(PlaybackBarButtonStyle())
         .controlSize(.large)
+    }
+
+    private var playlistMenu: some View {
+        Button("プレイリストに追加", systemImage: "text.badge.plus") { showsPlaylistPicker = true }
+            .disabled(queue.nowPlayingTrack == nil)
+            .help("再生中の曲をプレイリストに追加")
+            .popover(isPresented: $showsPlaylistPicker) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("プレイリストに追加").font(.headline)
+                        Spacer()
+                        Button("閉じる", systemImage: "xmark") { showsPlaylistPicker = false }.labelStyle(.iconOnly)
+                    }
+                    if let track = queue.nowPlayingTrack {
+                        Text(track.title).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        let compatible = playlists.compatiblePlaylists(for: [track.id])
+                        if compatible.isEmpty { Text("追加できるプレイリストがありません").font(.caption).foregroundStyle(.secondary) }
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(compatible) { playlist in
+                                    Button {
+                                        showsPlaylistPicker = false
+                                        Task {
+                                            playlists.dismissMessage()
+                                            await playlists.add(trackIDs: [track.id], to: playlist.id)
+                                            playlistError = playlists.message
+                                        }
+                                    } label: { Label(playlist.name, systemImage: "music.note.list").frame(maxWidth: .infinity, alignment: .leading) }
+                                }
+                            }
+                        }.frame(maxHeight: 240)
+                    }
+                    Divider()
+                    Button("プレイリストを管理…") { showsPlaylistPicker = false; store.destination = .playlists }
+                }.padding(16).frame(width: 300).labelStyle(.titleAndIcon).buttonStyle(.bordered)
+                    .homeStereoThemeScreen()
+            }
+    }
+
+    private var trackDetail: some View {
+        ScrollView {
+            if let track = queue.nowPlayingTrack {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack { Text("曲の詳細情報").font(.title2.bold()); Spacer(); Button("閉じる", systemImage: "xmark") { showsTrackDetail = false }.labelStyle(.iconOnly) }
+                    Text(track.title).font(.headline)
+                    LabeledContent("アーティスト", value: track.artist ?? "—")
+                    LabeledContent("アルバム", value: track.album ?? "—")
+                    LabeledContent("アルバムアーティスト", value: track.albumArtist ?? "—")
+                    LabeledContent("ジャンル", value: track.genre ?? "—")
+                    LabeledContent("曲長", value: formatPlaybackTime(track.duration))
+                    LabeledContent("形式", value: track.codec ?? track.fileExtension.uppercased())
+                    LabeledContent("サンプルレート", value: track.sampleRate.map { "\(Int($0)) Hz" } ?? "—")
+                    LabeledContent("ビット深度", value: track.bitDepth.map { "\($0) bit" } ?? "—")
+                    LabeledContent("サイズ", value: ByteCountFormatter.string(fromByteCount: track.fileSize, countStyle: .file))
+                    Divider()
+                    Text("音源の相対パス").font(.caption).foregroundStyle(.secondary)
+                    Text(track.relativePath).font(.caption).textSelection(.enabled)
+                    Text("HomeStereo Track ID").font(.caption).foregroundStyle(.secondary)
+                    Text(track.id.uuidString).font(.caption.monospaced()).textSelection(.enabled)
+                }.padding(20)
+            }
+        }.frame(width: 390, height: 520).homeStereoThemeScreen()
     }
 
     private func playbackStatus(showsVolume: Bool) -> some View {
@@ -565,6 +655,20 @@ private struct MainNowPlayingBar: View {
         pendingSeek = min(max(0, finiteValue), seekUpperBound)
     }
 
+}
+
+struct PlaybackBarButtonStyle: ButtonStyle {
+    var prominent = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 20, weight: .medium))
+            .frame(width: 44, height: 44)
+            .foregroundStyle(prominent && isEnabled ? Color.white : (isEnabled ? Color.primary : Color.secondary))
+            .background(Color.accentColor.opacity(isEnabled ? (prominent ? 0.9 : 0.09) : 0.035), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
 }
 
 private func formatPlaybackTime(_ seconds: TimeInterval) -> String {
@@ -797,10 +901,14 @@ private struct DevicesView: View {
             }
         }
         .navigationTitle("出力先")
-        .toolbar {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
             Button(store.isDiscovering ? "検索中…" : "再検索", systemImage: "arrow.clockwise") { Task { await store.discoverRenderers() } }
                 .disabled(store.isDiscovering)
                 .help("同じネットワーク上のスピーカーをもう一度探します")
+
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
         .safeAreaInset(edge: .bottom) {
             if let lastDiscoveryAt = store.lastDiscoveryAt {
@@ -954,9 +1062,9 @@ private struct PlaybackView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 26) {
-                HStack(alignment: .center, spacing: 28) {
+                VStack(spacing: 22) {
                     artwork
-                    VStack(alignment: .leading, spacing: 9) {
+                    VStack(alignment: .center, spacing: 9) {
                         Text(stateLabel.uppercased())
                             .font(.caption.bold())
                             .foregroundStyle(.secondary)
@@ -978,9 +1086,9 @@ private struct PlaybackView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     }
-                    Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
 
                 VStack(spacing: 10) {
                     Slider(value: $pendingSeek, in: 0...max(1, nowPlaying.duration)) { editing in
@@ -1071,7 +1179,11 @@ private struct PlaybackView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("再生中")
-        .toolbar { Button("状態を更新", systemImage: "arrow.clockwise") { Task { await store.refreshState() } } }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {  Button("状態を更新", systemImage: "arrow.clockwise") { Task { await store.refreshState() } }
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
+        }
         .onAppear { pendingSeek = nowPlaying.elapsed; pendingVolume = store.volume }
         .onChange(of: nowPlaying.elapsed) { _, value in pendingSeek = value }
         .onChange(of: store.volume) { _, value in pendingVolume = value }
@@ -1079,13 +1191,13 @@ private struct PlaybackView: View {
 
     @ViewBuilder private var artwork: some View {
         if let track = queue.nowPlayingTrack {
-            CachedArtwork(track: track, library: library, size: 210)
+            CachedArtwork(track: track, library: library, size: 340)
                 .shadow(color: .black.opacity(0.22), radius: 14, y: 7)
         } else {
             Image(systemName: "music.note")
                 .font(.system(size: 54))
                 .foregroundStyle(.secondary)
-                .frame(width: 210, height: 210)
+                .frame(width: 340, height: 340)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .accessibilityLabel("Artworkなし")
         }

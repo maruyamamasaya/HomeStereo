@@ -334,3 +334,23 @@ public actor FeatureRepository {
         return records
     }
 }
+
+/// Score comparison is a display hint, never a probability or an identity guarantee.
+public enum FeatureVoiceCategory: Int, CaseIterable, Sendable {
+    case vocal = 1, instrumental, uncertain, unavailable
+
+    public static func classify(_ values: [String: Double]?) -> Self {
+        guard let values, let vocal = values["vocal"], let instrumental = values["instrumental"],
+              vocal.isFinite, instrumental.isFinite else { return .unavailable }
+        if vocal > instrumental + 0.1 { return .vocal }
+        if instrumental > vocal + 0.1 { return .instrumental }
+        return .uncertain
+    }
+}
+
+public enum FeatureIdentityCheck {
+    public static func matches(featureID: UUID?, linkedIDs: Set<UUID>, canonicalHomeCount: Int) -> Bool {
+        guard let featureID, canonicalHomeCount == 1 else { return false }
+        return linkedIDs == Set([featureID])
+    }
+}

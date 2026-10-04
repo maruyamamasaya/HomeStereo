@@ -339,6 +339,38 @@ final class MyMusicTransferStoreTests: XCTestCase {
         XCTAssertEqual(files.requestedFileName, MyMusicJSONCodec.preferencesFileName)
     }
 
+    func testFeatureEditorValidatesEditsAndNeverWritesLibrary() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let record = FeatureRecord(id: UUID(), trackID: UUID(), title: "Feature song", artist: "Artist",
+            sourceIdentity: FeatureSourceIdentity(relativePath: "song.flac", fileSize: 100, duration: 120),
+            analysisVersion: 1, analyzedAt: fixture.now, importedAt: fixture.now,
+            features: FeatureValues(values: ["vocal": 0.8, "instrumental": 0.2]),
+            sourceFormat: "test", sourceFileName: "test.json")
+        let files = FakeMyMusicFiles()
+        let store = MyMusicJSONEditorStore(repository: repository, files: files)
+        store.changeFeatureMode(true)
+        await store.createFeatures([record])
+        XCTAssertEqual(store.records.count, 1)
+        let vocal = try XCTUnwrap(store.selectedFields.first { $0.path == "features.vocal" })
+        store.update(vocal, text: "0.6")
+        await store.save()
+        let decoded = try FeatureCodec.decode(XCTUnwrap(files.writtenData), fileName: "test.json")
+        XCTAssertEqual(decoded.first?.features.values["vocal"], 0.6)
+        XCTAssertEqual(decoded.first?.trackID, record.trackID)
+        XCTAssertEqual(files.requestedFileName, "track_features.json")
+        let context = try await repository.loadMyMusicMatchContext()
+        XCTAssertTrue(context.tracks.isEmpty)
+        files.writtenData = nil
+        store.update(vocal, text: "9")
+        await store.save()
+        XCTAssertNil(files.writtenData)
+        XCTAssertNotNil(store.errorMessage)
+        store.changeFeatureMode(false)
+        XCTAssertFalse(store.hasDocument)
+    }
+
     func testDeveloperEditorRejectsInvalidNumberBeforeWriting() async throws {
         let fixture = try TransferFixture()
         defer { fixture.cleanup() }

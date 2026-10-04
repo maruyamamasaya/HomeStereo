@@ -11,7 +11,7 @@ public struct LibraryAlbum: Identifiable, Hashable, Sendable {
     public let albumArtist: String?
     public let tracks: [Track]
     public init(title: String, albumArtist: String?, tracks: [Track]) {
-        self.id = ID(albumArtist: albumArtist, title: title)
+        self.id = ID(albumArtist: nil, title: title)
         self.title = title; self.albumArtist = albumArtist; self.tracks = tracks
     }
 }
@@ -148,23 +148,30 @@ public struct LibraryBrowserIndex: Sendable {
             return
         }
 
-        let albumGroups = Dictionary(grouping: base.tracks.compactMap { track -> (LibraryAlbum.ID, Track)? in
+        let collectionTracks = genreFiltered.filter(\.isRegularLibraryTrack)
+        let albumGroups = Dictionary(grouping: collectionTracks.compactMap { track -> (LibraryAlbum.ID, Track)? in
             guard let title = track.album?.nilIfBlank else { return nil }
-            return (LibraryAlbum.ID(albumArtist: track.albumArtist?.nilIfBlank, title: title), track)
+            return (LibraryAlbum.ID(albumArtist: nil, title: title), track)
         }, by: { $0.0 })
         self.albums = albumGroups.map { key, values in
-            LibraryAlbum(title: key.title, albumArtist: key.albumArtist, tracks: Self.trackOrder(values.map(\.1)))
+            let tracks = Self.trackOrder(values.map(\.1))
+            let albumArtists = Set(tracks.map { $0.albumArtist?.nilIfBlank })
+            let albumArtist = albumArtists.count == 1 ? tracks.first?.albumArtist?.nilIfBlank : nil
+            return LibraryAlbum(title: key.title, albumArtist: albumArtist, tracks: tracks)
         }.filter {
             query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) ||
                 ($0.albumArtist?.localizedCaseInsensitiveContains(query) ?? false) ||
-                $0.tracks.contains { $0.title.localizedCaseInsensitiveContains(query) }
+                $0.tracks.contains { track in
+                    [track.title, track.artist, track.albumArtist].compactMap { $0 }
+                        .contains { $0.localizedCaseInsensitiveContains(query) }
+                }
         }.sorted {
             let lhs = base.sort == .artist ? ($0.albumArtist ?? "") : $0.title
             let rhs = base.sort == .artist ? ($1.albumArtist ?? "") : $1.title
             return lhs.localizedStandardCompare(rhs) == .orderedAscending
         }
 
-        let artistGroups = Dictionary(grouping: base.tracks.compactMap { track -> (String, Track)? in
+        let artistGroups = Dictionary(grouping: collectionTracks.compactMap { track -> (String, Track)? in
             guard let artist = track.artist?.nilIfBlank else { return nil }
             return (artist, track)
         }, by: { $0.0 })

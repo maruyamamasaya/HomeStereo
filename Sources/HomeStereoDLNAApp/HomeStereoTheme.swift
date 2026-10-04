@@ -54,6 +54,27 @@ enum HomeStereoTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    var calendarSaturday: Color {
+        switch self {
+        case .system: .blue
+        case .simpleDark: Color(red: 0.55, green: 0.68, blue: 0.85)
+        case .livingAurora, .pulseNeon: accent
+        case .blueCosmos: Color(red: 0.55, green: 0.74, blue: 1)
+        }
+    }
+
+    var calendarSunday: Color {
+        switch self {
+        case .system: .red
+        case .simpleDark: Color(red: 0.85, green: 0.56, blue: 0.60)
+        case .livingAurora: Color(red: 0.86, green: 0.59, blue: 0.91)
+        case .pulseNeon: Color(red: 1, green: 0.46, blue: 0.73)
+        case .blueCosmos: Color(red: 0.96, green: 0.60, blue: 0.69)
+        }
+    }
+
+    var calendarCornerRadius: CGFloat { self == .pulseNeon ? 6 : 12 }
+
     fileprivate var base: Color {
         switch self {
         case .system: Color(nsColor: .windowBackgroundColor)

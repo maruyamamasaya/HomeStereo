@@ -23,10 +23,15 @@ public final class TrackFeatureStore {
     public private(set) var missingCount = 0
     public private(set) var missingLoudnessCount = 0
     public private(set) var updateCount = 0
+    public var analysisConcurrency: FeatureAnalysisConcurrency {
+        didSet { defaults.set(analysisConcurrency.rawValue, forKey: "analysis.concurrency") }
+    }
     public var normalizationEnabled: Bool {
         didSet { defaults.set(normalizationEnabled, forKey: "audio.normalization.enabled"); publishPlaybackFeatures() }
     }
     @ObservationIgnored public var onPlaybackFeatures: (@MainActor ([UUID: FeatureValues], Bool) -> Void)?
+    public private(set) var canonicalHomeCounts: [UUID: Int] = [:]
+    public private(set) var linkedIDs: [UUID: Set<UUID>] = [:]
     public var query = ""
     public var selectedID: UUID?
     public var selectedBatch: FeatureBatch?
@@ -45,6 +50,7 @@ public final class TrackFeatureStore {
     public init(library: any MyMusicPersisting, archive: FeatureRepository, files: any MyMusicFileServicing, analyzer: (any FeatureAnalysisRunning)? = nil, defaults: UserDefaults = .standard) {
         self.library = library; self.archive = archive; self.files = files
         self.analyzer = analyzer ?? FeatureAnalysisService(); self.defaults = defaults
+        self.analysisConcurrency = FeatureAnalysisConcurrency(rawValue: defaults.integer(forKey: "analysis.concurrency")) ?? .three
         self.normalizationEnabled = defaults.bool(forKey: "audio.normalization.enabled")
     }
     public var exportableCount: Int { rows.filter { $0.record.trackID != nil }.count }
@@ -67,6 +73,8 @@ public final class TrackFeatureStore {
     }
     private func resolve(_ records: [FeatureRecord]) async throws -> [FeatureResolution] {
         let context = try await library.loadMyMusicMatchContext()
+        canonicalHomeCounts = Dictionary(grouping: context.links, by: \.myMusicTrackID).mapValues { Set($0.map(\.homeStereoTrackID)).count }
+        linkedIDs = Dictionary(grouping: context.links, by: \.homeStereoTrackID).mapValues { Set($0.map(\.myMusicTrackID)) }
         return await Task.detached(priority: .userInitiated) {
             let resolver = FeatureResolver(tracks: context.tracks, links: context.links)
             return records.map { resolver.resolve($0) }.sorted {
@@ -120,6 +128,7 @@ public final class TrackFeatureStore {
         guard !isBusy, preview == nil else { return }
         isBusy = true; errorMessage = nil; message = nil; analysisProgress = nil
         defer { isBusy = false }
+        let concurrency = analysisConcurrency.rawValue
         do {
             let context = try await library.loadMyMusicMatchContext()
             let records = try await archive.load()
@@ -127,7 +136,7 @@ public final class TrackFeatureStore {
                 FeatureAnalysisPlanner.tasks(mode: mode, tracks: context.tracks, links: context.links, records: records)
             }.value
             guard !tasks.isEmpty else { message = "解析対象はありません。"; return }
-            let result = try await analyzer.run(tasks: tasks) { [weak self] progress in self?.analysisProgress = progress }
+            let result = try await analyzer.run(tasks: tasks, concurrency: concurrency) { [weak self] progress in self?.analysisProgress = progress }
             let saved = try await archive.merge(result, tracks: context.tracks, links: context.links)
             rows = try await resolve(saved); try await refreshCounts(); publishPlaybackFeatures()
             message = "解析完了：保存 \(result.count)件、失敗 \(analysisProgress?.failed ?? 0)件。完了済みの処理は次回再利用します。"

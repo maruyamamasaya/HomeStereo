@@ -6,7 +6,7 @@ import HomeStereoAppCore
 
 @MainActor
 public protocol FeatureAnalysisRunning: AnyObject {
-    func run(tasks: [FeatureAnalysisTask], progress: @escaping @MainActor (FeatureAnalysisProgress) -> Void) async throws -> [FeatureRecord]
+    func run(tasks: [FeatureAnalysisTask], concurrency: Int, progress: @escaping @MainActor (FeatureAnalysisProgress) -> Void) async throws -> [FeatureRecord]
     func cancel() async throws
     func recover() async throws -> [FeatureRecord]
 }
@@ -16,13 +16,13 @@ public extension FeatureAnalysisRunning {
 }
 
 actor FeatureRunFiles {
-    struct Request: Encodable { let version = 1; let tasks: [FeatureAnalysisTask] }
+    struct Request: Encodable { let version = 1; let tasks: [FeatureAnalysisTask]; let concurrency: Int }
     struct Results: Decodable { let version: Int; let records: [FeatureRecord] }
-    func create(tasks: [FeatureAnalysisTask]) throws -> URL {
+    func create(tasks: [FeatureAnalysisTask], concurrency: Int) throws -> URL {
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let directory = base.appendingPathComponent("HomeStereo/AnalysisRuns/\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try FeatureCodec.encoder().encode(Request(tasks: tasks)).write(to: directory.appendingPathComponent("request.json"), options: .atomic)
+        try FeatureCodec.encoder().encode(Request(tasks: tasks, concurrency: concurrency)).write(to: directory.appendingPathComponent("request.json"), options: .atomic)
         return directory
     }
     func status(_ directory: URL) throws -> FeatureAnalysisProgress? {
@@ -64,11 +64,12 @@ public final class FeatureAnalysisService: FeatureAnalysisRunning {
     private let files = FeatureRunFiles()
     private var directory: URL?
     public init() {}
-    public func run(tasks: [FeatureAnalysisTask], progress: @escaping @MainActor (FeatureAnalysisProgress) -> Void) async throws -> [FeatureRecord] {
+    public func run(tasks: [FeatureAnalysisTask], concurrency: Int = 3, progress: @escaping @MainActor (FeatureAnalysisProgress) -> Void) async throws -> [FeatureRecord] {
+        guard FeatureAnalysisConcurrency(rawValue: concurrency) != nil else { throw FeatureError.invalid("同時解析数は2曲・3曲・6曲から選んでください。") }
         guard directory == nil else { throw FeatureError.invalid("解析が実行中です。") }
         let app = URL(fileURLWithPath: "/Applications/HomeStereoAnalyzer.app")
         guard FileManager.default.fileExists(atPath: app.path) else { throw FeatureError.invalid("解析用補助アプリが未導入です。HomeStereo Analyzerをインストールしてください。") }
-        let runDirectory = try await files.create(tasks: tasks)
+        let runDirectory = try await files.create(tasks: tasks, concurrency: concurrency)
         directory = runDirectory
         defer { directory = nil }
         let configuration = NSWorkspace.OpenConfiguration()

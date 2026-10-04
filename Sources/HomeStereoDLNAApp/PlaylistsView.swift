@@ -44,12 +44,16 @@ struct PlaylistsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("プレイリスト")
-        .toolbar {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
             Button("プレイリストを作成", systemImage: "plus") { beginCreate() }
             Button("M3U8を読み込む", systemImage: "square.and.arrow.down") { Task { await store.importM3U8() } }
             if let playlist = selectedPlaylist {
                 playlistManagementMenu(playlist)
             }
+
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
         .alert("新しいプレイリスト", isPresented: $showsCreateDialog) {
             TextField("プレイリスト名", text: $newName)

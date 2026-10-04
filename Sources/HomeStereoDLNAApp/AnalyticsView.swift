@@ -11,7 +11,15 @@ struct AnalyticsView: View {
     @Bindable var queue: QueueStore
     @Bindable var library: LibraryStore
     @Bindable var store: AnalyticsStore
+    @Bindable var features: TrackFeatureStore
+    @Environment(\.homeStereoTheme) private var theme
     @State private var section = 0
+    @State private var selectedDate = Date.now
+    @State private var month = Date.now
+    @State private var weekly = false
+    @State private var ratingSelection = 11
+    @State private var voiceSelection = 0
+    @State private var rateSort = 0
     @State private var resetAllConfirmation = false
     @State private var resetTrack: AnalyticsTrackSummary?
 
@@ -22,21 +30,22 @@ struct AnalyticsView: View {
                 Text("再生履歴").tag(1)
                 Text("最近の傾向").tag(2)
                 Text("評価").tag(3)
+                Text("完走・スキップ").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(14)
+            HStack {
+                Spacer()
+                Button("再集計", systemImage: "arrow.clockwise") { Task { await store.refresh() } }.disabled(store.isLoading)
+                Menu("履歴の管理", systemImage: "ellipsis.circle") {
+                    Button("すべての分析履歴を削除", role: .destructive) { resetAllConfirmation = true }
+                        .disabled(store.snapshot.recentEvents.isEmpty)
+                }
+            }.padding(.horizontal, 14).padding(.bottom, 12)
             Divider()
             content
         }
         .navigationTitle("分析")
-        .toolbar {
-            Button("再集計", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
-                .disabled(store.isLoading)
-            Menu("管理", systemImage: "ellipsis.circle") {
-                Button("すべての分析履歴を削除", role: .destructive) { resetAllConfirmation = true }
-                    .disabled(store.snapshot.recentEvents.isEmpty)
-            }
-        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let error = store.errorMessage {
                 HStack {
@@ -66,7 +75,7 @@ struct AnalyticsView: View {
         } message: {
             Text("お気に入り、Good／Bad評価、プレイリスト、曲情報は維持されます。")
         }
-        .task { await store.activate() }
+        .task { await store.activate(); if features.rows.isEmpty { await features.load() } }
         .onDisappear { store.deactivate() }
         .onChange(of: library.revision) { _, _ in store.invalidate() }
     }
@@ -78,7 +87,8 @@ struct AnalyticsView: View {
         } else if section == 0 { overview }
         else if section == 1 { history }
         else if section == 2 { trends }
-        else { ratings }
+        else if section == 3 { ratings }
+        else { rates }
     }
 
     private var overview: some View {
@@ -128,42 +138,177 @@ struct AnalyticsView: View {
         .padding(14).background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
     }
 
+    private var allEvents: [AnalyticsEventRow] { store.snapshot.historyDays.flatMap(\.events) }
+    private var selectedInterval: DateInterval? {
+        Calendar.current.dateInterval(of: weekly ? .weekOfYear : .day, for: selectedDate)
+    }
+    private var historyEvents: [AnalyticsEventRow] {
+        guard let interval = selectedInterval else { return [] }
+        return allEvents.filter { $0.startedAt >= interval.start && $0.startedAt < interval.end }
+    }
+    private var monthDays: [Date?] {
+        let calendar = Calendar.current
+        guard let interval = calendar.dateInterval(of: .month, for: month),
+              let range = calendar.range(of: .day, in: .month, for: month) else { return [] }
+        let offset = (calendar.component(.weekday, from: interval.start) - calendar.firstWeekday + 7) % 7
+        let days: [Date?] = Array(repeating: nil, count: offset) + range.map { calendar.date(byAdding: .day, value: $0 - 1, to: interval.start) }
+        return days + Array(repeating: nil, count: (7 - days.count % 7) % 7)
+    }
     private var history: some View {
-        Group {
-            if store.snapshot.historyDays.isEmpty {
-                ContentUnavailableView(
-                    "再生履歴はありません", systemImage: "clock.arrow.circlepath",
-                    description: Text("曲を実際に再生すると、ここへ日別に記録されます。")
-                )
-            } else {
-                List {
-                    ForEach(store.snapshot.historyDays) { day in
-                        Section(day.date.formatted(date: .complete, time: .omitted)) {
-                            ForEach(day.events) { eventRow($0) }
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack {
+                    Label("再生カレンダー", systemImage: "calendar").font(.title2.bold())
+                    Spacer()
+                    Picker("表示期間", selection: $weekly) {
+                        Text("日ごと").tag(false); Text("週間").tag(true)
+                    }.pickerStyle(.segmented).frame(width: 170)
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 24) {
+                        calendarPanel.frame(width: 700)
+                        historyDetail.frame(minWidth: 230, idealWidth: 280, maxWidth: 340)
+                    }.frame(minWidth: 954)
+                    VStack(spacing: 24) {
+                        calendarPanel.frame(maxWidth: 680)
+                        historyDetail
+                    }.frame(maxWidth: .infinity)
+                }
+            }.padding(20)
+        }
+    }
+
+    private var calendarPanel: some View {
+        let counts = Dictionary(uniqueKeysWithValues: store.snapshot.historyDays.map { ($0.date, $0.events.count) })
+        return VStack(spacing: 16) {
+            HStack {
+                Button("前月", systemImage: "chevron.left") { moveMonth(-1) }.labelStyle(.iconOnly)
+                Spacer()
+                Text(month.formatted(.dateTime.year().month())).font(.title2.bold()).monospacedDigit()
+                Spacer()
+                Button("翌月", systemImage: "chevron.right") { moveMonth(1) }.labelStyle(.iconOnly)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 7), spacing: 8) {
+                ForEach(0..<7, id: \.self) { index in
+                    let weekday = (Calendar.current.firstWeekday - 1 + index) % 7 + 1
+                    Text(Calendar.current.shortWeekdaySymbols[weekday - 1])
+                        .font(.caption.weight(.semibold)).foregroundStyle(calendarColor(weekday))
+                        .frame(maxWidth: .infinity).padding(.bottom, 4)
+                }
+                ForEach(Array(monthDays.enumerated()), id: \.offset) { _, date in
+                    if let date { calendarDay(date, count: counts[date, default: 0]) }
+                    else {
+                        Color.secondary.opacity(0.025).aspectRatio(1, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: theme.calendarCornerRadius))
+                            .accessibilityHidden(true)
                     }
                 }
+            }
+            HStack {
+                Button("今日に戻る") { month = .now; selectedDate = .now }
+                Spacer()
+                Button("最新の履歴") {
+                    if let latest = store.snapshot.historyDays.first?.date { month = latest; selectedDate = latest }
+                }.disabled(store.snapshot.historyDays.isEmpty)
+            }.font(.caption)
+            Text("日付を押すと、その日／週の曲と再生時間を表示します。")
+                .font(.caption).foregroundStyle(.secondary)
+        }.padding(16).homeStereoThemeSurface(cornerRadius: 18)
+    }
+
+    private func calendarColor(_ weekday: Int) -> Color {
+        weekday == 1 ? theme.calendarSunday : (weekday == 7 ? theme.calendarSaturday : .secondary)
+    }
+
+    private func calendarDay(_ date: Date, count: Int) -> some View {
+        let weekday = Calendar.current.component(.weekday, from: date)
+        let weekend = weekday == 1 || weekday == 7
+        let color = calendarColor(weekday)
+        let selected = selectedInterval.map { date >= $0.start && date < $0.end } == true
+        let today = Calendar.current.isDateInToday(date)
+        let shape = RoundedRectangle(cornerRadius: theme.calendarCornerRadius)
+        return Button { selectedDate = date } label: {
+            Color.clear.aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(date.formatted(.dateTime.day())).font(.system(size: 12, weight: selected || today ? .semibold : .regular))
+                                .foregroundStyle(weekend ? color : .secondary)
+                            Spacer(minLength: 0)
+                            Circle().fill(today ? theme.accent : .clear).frame(width: 5, height: 5)
+                        }
+                        Spacer(minLength: 0)
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text("\(count)").font(.system(size: 23, weight: .semibold, design: .rounded)).monospacedDigit()
+                            Text("件").font(.system(size: 10))
+                        }.foregroundStyle(count > 0 ? (selected ? theme.accent : .primary) : .secondary)
+                    }.padding(10)
+                }
+                .background {
+                    shape.fill(theme.surface)
+                    shape.fill(LinearGradient(colors: [selected ? theme.accent.opacity(0.26) : (weekend ? color.opacity(0.08) : .clear), theme.accent.opacity(selected ? 0.08 : 0.015)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                }
+                .overlay { shape.strokeBorder(selected || today ? theme.accent : color.opacity(weekend ? 0.35 : 0.16), lineWidth: selected ? 2 : 1) }
+                .contentShape(shape)
+        }.buttonStyle(.plain)
+            .accessibilityLabel("\(date.formatted(date: .complete, time: .omitted))、再生履歴\(count)件\(today ? "、今日" : "")")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .help(today ? "今日 · \(count)件の再生履歴" : "\(count)件の再生履歴")
+    }
+
+    private var historyDetail: some View {
+        let events = historyEvents
+        return VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text(weekly ? "\(selectedInterval?.start.formatted(date: .abbreviated, time: .omitted) ?? "")からの1週間" : selectedDate.formatted(date: .complete, time: .omitted)).font(.title3.bold())
+                HStack(spacing: 18) {
+                    Label("\(events.count)件", systemImage: "music.note.list")
+                    Label(duration(events.reduce(0) { $0 + $1.listenedSeconds }), systemImage: "clock")
+                }.font(.subheadline).foregroundStyle(theme.accent)
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(16).homeStereoThemeSurface(cornerRadius: 14)
+            if events.isEmpty {
+                ContentUnavailableView("この期間の履歴はありません", systemImage: "calendar")
+                    .frame(maxWidth: .infinity, minHeight: 180)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(events) { event in
+                        eventRow(event).padding(12)
+                        Divider().padding(.horizontal, 12)
+                    }
+                }.homeStereoThemeSurface(cornerRadius: 14)
             }
         }
     }
 
+    private func moveMonth(_ value: Int) {
+        month = Calendar.current.date(byAdding: .month, value: value, to: month) ?? month
+    }
+
     private func eventRow(_ event: AnalyticsEventRow) -> some View {
-        HStack(spacing: 12) {
-            artwork(event.trackID, size: 40)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(event.title).lineLimit(1)
-                Text(event.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Text("\(event.startedAt.formatted(date: .omitted, time: .shortened)) · \(duration(event.listenedSeconds)) · \(sourceLabel(event.startSource))")
-                    .font(.caption2).foregroundStyle(.tertiary)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 10) {
+                artwork(event.trackID, size: 36)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(event.title).font(.callout.weight(.medium)).lineLimit(2)
+                    Text(event.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer()
-            platformBadge(event)
-            if event.wasFullPlayback { Label("完走", systemImage: "checkmark.circle.fill").foregroundStyle(.green) }
-            else if event.wasEarlySkip { Label("Early Skip", systemImage: "forward.fill").foregroundStyle(.orange) }
-            else if event.wasSkipped { Label("Skip", systemImage: "forward.end").foregroundStyle(.orange) }
-            else { Text("途中終了").foregroundStyle(.secondary) }
-        }
-        .font(.caption)
+            HStack {
+                Text("\(event.startedAt.formatted(date: .omitted, time: .shortened)) · \(duration(event.listenedSeconds))")
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                platformBadge(event)
+            }
+            HStack {
+                Text(sourceLabel(event.startSource)).foregroundStyle(.tertiary)
+                Spacer(minLength: 4)
+                if event.wasFullPlayback { Label("完走", systemImage: "checkmark.circle.fill").foregroundStyle(.green) }
+                else if event.wasEarlySkip { Label("Early Skip", systemImage: "forward.fill").foregroundStyle(.orange) }
+                else if event.wasSkipped { Label("Skip", systemImage: "forward.end").foregroundStyle(.orange) }
+                else { Text("途中終了").foregroundStyle(.secondary) }
+            }.font(.caption)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func platformBadge(_ event: AnalyticsEventRow) -> some View {
@@ -181,59 +326,95 @@ struct AnalyticsView: View {
             .help("再生元: \(event.platform.isEmpty ? "不明" : event.platform)")
     }
 
+    private let voiceLabels = ["すべて", "ボーカル", "インスト", "判定保留", "未解析"]
     private var trends: some View {
-        Group {
-            if store.snapshot.trends.isEmpty {
-                ContentUnavailableView(
-                    "傾向を計算できる履歴がありません", systemImage: "chart.line.uptrend.xyaxis",
-                    description: Text("再生を重ねると、理由付きの傾向を表示します。")
-                )
-            } else {
-                List(store.snapshot.trends) { value in
-                    HStack(spacing: 12) {
-                        Image(systemName: trendIcon(value.kind)).frame(width: 28).foregroundStyle(.tint)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(value.title).font(.headline)
-                            if !value.subtitle.isEmpty { Text(value.subtitle).font(.caption).foregroundStyle(.secondary) }
-                            Text(value.reason).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
+        let recent = allEvents.filter { $0.startedAt >= Calendar.current.date(byAdding: .day, value: -7, to: .now)! }
+        var categories: [UUID: Int] = [:]
+        let ordered = features.rows.sorted {
+            $0.record.analysisVersion == $1.record.analysisVersion ? $0.record.analyzedAt < $1.record.analyzedAt : $0.record.analysisVersion < $1.record.analysisVersion
+        }
+        for row in ordered {
+            if let id = row.localTrackID { categories[id] = FeatureVoiceCategory.classify(row.record.features.values).rawValue }
+        }
+        let grouped = Dictionary(grouping: recent, by: { categories[$0.trackID, default: 4] })
+        let selected = recent.filter { voiceSelection == 0 || categories[$0.trackID, default: 4] == voiceSelection }
+        let counts = Dictionary(grouping: selected, by: \.trackID).mapValues(\.count)
+        let tracks = store.snapshot.allTracks.filter { counts[$0.trackID] != nil }.sorted { counts[$0.trackID, default: 0] > counts[$1.trackID, default: 0] }
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("直近7日間の聴き方").font(.title2.bold())
+            HStack {
+                ForEach(1..<5) { category in
+                    metric(voiceLabels[category], "\(grouped[category, default: []].count)件", category == 1 ? "mic" : "music.note")
                 }
             }
-        }
+            Picker("曲のタイプ", selection: $voiceSelection) { ForEach(0..<5) { Text(voiceLabels[$0]).tag($0) } }.pickerStyle(.segmented)
+            Text("解析スコアの差による目安です。確率ではありません。差が小さい曲は判定保留、特徴量がない曲は未解析に分けます。").font(.caption).foregroundStyle(.secondary)
+            List {
+                if voiceSelection == 0 {
+                    Section("傾向と理由") {
+                        ForEach(store.snapshot.trends) { value in
+                            VStack(alignment: .leading, spacing: 4) { Label(value.title, systemImage: trendIcon(value.kind)).font(.headline); Text(value.reason).font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+                Section("この期間によく聴いた曲") {
+                    ForEach(tracks) { track in
+                        HStack { trackRow(track, showsRating: false); Text("直近7日 \(counts[track.trackID, default: 0])件").monospacedDigit() }
+                    }
+                    if tracks.isEmpty { Text("この分類の再生履歴はありません").foregroundStyle(.secondary) }
+                }
+            }
+        }.padding(16)
     }
-
     private var ratings: some View {
-        VStack(spacing: 0) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 12) {
-                    ForEach(store.snapshot.ratings) { value in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(ratingLabel(value.group)).font(.headline)
-                            Text("\(value.trackCount)曲 · \(value.playCount)回再生").font(.caption)
-                            Text("完走率 \(percent(value.completionRate)) · Skip率 \(percent(value.skipRate))")
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                        .frame(width: 190, alignment: .leading).padding(12)
-                        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
-                    }
+        let groups = Dictionary(grouping: store.snapshot.allTracks, by: { $0.playbackPreference ?? 11 })
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Good / Bad の評価別に曲を探す").font(.title2.bold())
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 82))], spacing: 8) {
+                ForEach(Array(stride(from: 10, through: -10, by: -1)) + [11], id: \.self) { rating in
+                    Button { ratingSelection = rating } label: {
+                        VStack(spacing: 4) {
+                            Text(rating == 11 ? "未設定" : (rating > 0 ? "+\(rating)" : "\(rating)")).font(.headline)
+                            Text("\(groups[rating, default: []].count)曲").font(.caption)
+                        }.frame(maxWidth: .infinity).padding(8)
+                            .background(ratingSelection == rating ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    }.buttonStyle(.plain)
                 }
-                .padding(14)
             }
-            Divider()
-            List(store.snapshot.allTracks) { trackRow($0, showsRating: true) }
+            Text(ratingSelection == 11 ? "未設定の曲" : "評価 \(ratingSelection) の曲").font(.headline)
+            List(groups[ratingSelection, default: []]) { trackRow($0, showsRating: true) }
+                .overlay { if groups[ratingSelection, default: []].isEmpty { ContentUnavailableView("この評価の曲はありません", systemImage: "hand.thumbsup") } }
+        }.padding(16)
+    }
+    private var rates: some View {
+        let events = allEvents
+        let measured = events.filter { $0.completionRatio != nil }
+        let completed = measured.filter(\.wasFullPlayback).count
+        let skipped = events.filter(\.wasSkipped).count
+        let tracks = store.snapshot.allTracks.filter { $0.sessionCount > 0 }.sorted {
+            rateSort == 0 ? ($0.skipRate ?? -1) > ($1.skipRate ?? -1) : ($0.completionRate ?? -1) > ($1.completionRate ?? -1)
         }
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("完走率・スキップ率").font(.title2.bold())
+            HStack {
+                metric("完走率", percent(measured.isEmpty ? nil : Double(completed) / Double(measured.count)), "checkmark.circle")
+                metric("スキップ率", percent(events.isEmpty ? nil : Double(skipped) / Double(events.count)), "forward.end")
+                metric("Early Skip", "\(events.filter(\.wasEarlySkip).count)件", "forward.fill")
+            }
+            Text("全期間の詳細履歴を集計。完走 \(completed) / 曲長が判明している \(measured.count)件、スキップ \(skipped) / 全 \(events.count)件。履歴を削除した期間は含みません。").font(.caption).foregroundStyle(.secondary)
+            Picker("並び順", selection: $rateSort) { Text("スキップ率が高い順").tag(0); Text("完走率が高い順").tag(1) }.pickerStyle(.segmented)
+            List(tracks) { trackRow($0, showsRating: false, showsRates: true) }
+        }.padding(16)
     }
 
-    private func trackRow(_ value: AnalyticsTrackSummary, showsRating: Bool) -> some View {
+    private func trackRow(_ value: AnalyticsTrackSummary, showsRating: Bool, showsRates: Bool = false) -> some View {
         HStack(spacing: 12) {
             artwork(value.trackID, size: 44)
             VStack(alignment: .leading, spacing: 3) {
                 Text(value.title).font(.headline).lineLimit(1)
                 Text([value.artist, value.album].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Text("\(value.playCount)回 · \(duration(value.totalPlaybackDuration)) · 完走率 \(percent(value.completionRate)) · Skip率 \(percent(value.skipRate))")
+                Text(showsRates ? "\(value.sessionCount)件 · 完走率 \(percent(value.completionRate)) · スキップ率 \(percent(value.skipRate)) · Early Skip \(value.earlySkipCount)件" : "\(value.playCount)回 · \(duration(value.totalPlaybackDuration))")
                     .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer()

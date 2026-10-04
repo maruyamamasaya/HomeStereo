@@ -8,6 +8,7 @@ import SwiftUI
 
 struct MyMusicTransferView: View {
     @Bindable var store: MyMusicTransferStore
+    @Bindable var features: TrackFeatureStore
     @State private var limitsPlaybackEventRange = true
     @State private var playbackEventsStartDate = Calendar.current.date(
         byAdding: .month, value: -1, to: .now
@@ -26,12 +27,36 @@ struct MyMusicTransferView: View {
                 else if let message = store.completedMessage { completion(message) }
                 transferSection(title: "MyMusicから読み込む", importing: true)
                 transferSection(title: "MyMusic向けに書き出す", importing: false)
+                GroupBox("音楽特徴量の受け渡し") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("iPhone読み込み用は解析版ごと、全件保存用はMyMusic Track IDがある曲を書き出します。").font(.caption).foregroundStyle(.secondary)
+                        Picker("解析版", selection: $features.selectedBatch) {
+                            Text("最新の解析版").tag(Optional<FeatureBatch>.none)
+                            ForEach(features.batches) { Text("解析版\($0.version)").tag(Optional($0)) }
+                        }
+                        HStack {
+                            Button("iPhone読み込み用JSON…") { Task { await features.exportAnalyzer() } }.disabled(features.rows.isEmpty)
+                            Button("全件保存用JSON…") { Task { await features.exportSnapshot() } }.disabled(features.exportableCount == 0)
+                            Button("特徴量JSONを読み込む…") { Task { await features.chooseImport() } }
+                        }.disabled(features.isBusy || features.preview != nil)
+                        if let preview = features.preview {
+                            Text("読み込み候補 \(preview.count)件 · 照合済み \(preview.filter { $0.localTrackID != nil }.count)件")
+                            HStack {
+                                Button("確認して読み込む") { Task { await features.applyImport() } }
+                                Button("キャンセル") { features.cancelPreview() }
+                            }.disabled(features.isBusy)
+                        }
+                        if let message = features.message { Text(message).font(.caption) }
+                        if let error = features.errorMessage { Text(error).foregroundStyle(.orange) }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
                 if let preview = store.preview { previewCard(preview) }
                 if let preview = store.preferencesExportPreview { preferencesExportPreviewCard(preview) }
             }
             .padding(24).frame(maxWidth: 920).frame(maxWidth: .infinity)
         }
         .navigationTitle("MyMusic連携")
+        .task { if features.rows.isEmpty { await features.load() } }
     }
 
     private var header: some View {
@@ -326,6 +351,9 @@ struct MyMusicTransferView: View {
 
 struct MyMusicJSONEditorView: View {
     @Bindable var store: MyMusicJSONEditorStore
+    @Bindable var features: TrackFeatureStore
+    @State private var fieldQuery = ""
+    @State private var featureFieldsOnly = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -347,7 +375,8 @@ struct MyMusicJSONEditorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle("開発者")
+        .navigationTitle("JSON加工ツール")
+        .task { if features.rows.isEmpty { await features.load() } }
     }
 
     private var header: some View {
@@ -361,7 +390,12 @@ struct MyMusicJSONEditorView: View {
                 Spacer()
                 if store.isBusy { ProgressView().controlSize(.small) }
             }
+            Text("1. 種類を選ぶ → 2. 現在値から作成／既存JSONを開く → 3. 曲と項目を編集 → 4. 検証して保存").font(.caption).foregroundStyle(.secondary)
+            Picker("対象", selection: Binding(get: { store.editsFeatures }, set: { store.changeFeatureMode($0) })) {
+                Text("ライブラリ・コレクション").tag(false); Text("音楽特徴量").tag(true)
+            }.pickerStyle(.segmented)
             HStack(spacing: 10) {
+                if !store.editsFeatures {
                 Picker("文書", selection: Binding(
                     get: { store.kind }, set: { store.changeKind(to: $0) }
                 )) {
@@ -369,9 +403,10 @@ struct MyMusicJSONEditorView: View {
                         Text(label(kind)).tag(kind)
                     }
                 }
-                .frame(width: 230)
+                .frame(width: 200)
+                }
                 Button("現在値から作成", systemImage: "wand.and.stars") {
-                    Task { await store.createFromCurrentValues() }
+                    Task { if store.editsFeatures { await store.createFeatures(features.rows.map(\.record)) } else { await store.createFromCurrentValues() } }
                 }
                 Button("既存JSONを開く…", systemImage: "folder") {
                     Task { await store.openExistingFile() }
@@ -383,7 +418,11 @@ struct MyMusicJSONEditorView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!store.hasDocument || store.isBusy)
             }
+            if store.editsFeatures {
+                Text("ID付き曲の全件保存用JSONを作成できます。既存のiPhone読み込み用JSONも編集できます。編集はファイルのみへ保存します。ライブラリへの反映は音楽特徴量ページから読み込んでください。").font(.caption).foregroundStyle(.secondary)
+            }
         }
+        .disabled(store.isBusy)
         .padding(20)
     }
 
@@ -414,11 +453,19 @@ struct MyMusicJSONEditorView: View {
 
             VStack(spacing: 0) {
                 if !store.rootFields.isEmpty {
-                    fieldSection("文書設定", fields: store.rootFields)
+                    DisclosureGroup("文書設定（形式・日時）") {
+                        fieldSection("文書設定", fields: store.rootFields).frame(height: 170)
+                    }.padding(10)
                     Divider()
                 }
                 if store.selectedRecordID != nil {
-                    fieldSection("選択項目", fields: store.selectedFields)
+                    HStack {
+                        TextField("項目名で絞り込む", text: $fieldQuery).textFieldStyle(.roundedBorder)
+                        if store.editsFeatures { Toggle("特徴量のみ", isOn: $featureFieldsOnly) }
+                    }.padding(10)
+                    fieldSection("選択項目", fields: store.selectedFields.filter {
+                        (fieldQuery.isEmpty || $0.path.localizedStandardContains(fieldQuery)) && (!store.editsFeatures || !featureFieldsOnly || $0.path.hasPrefix("features."))
+                    })
                 } else {
                     ContentUnavailableView(
                         "項目を選択してください", systemImage: "sidebar.left",
@@ -426,7 +473,7 @@ struct MyMusicJSONEditorView: View {
                     )
                 }
             }
-            .frame(minWidth: 480)
+            .frame(minWidth: 360)
         }
     }
 
@@ -441,19 +488,31 @@ struct MyMusicJSONEditorView: View {
             Divider()
             Table(fields) {
                 TableColumn("項目") { field in
-                    Text(field.path).font(.callout.monospaced()).textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(fieldLabel(field.path)).font(.callout)
+                        Text(field.path).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    }.textSelection(.enabled)
                 }
-                .width(min: 160, ideal: 240)
+                .width(min: 110, ideal: 190)
                 TableColumn("型") { field in
                     Text(field.kind.rawValue).font(.caption).foregroundStyle(.secondary)
                 }
-                .width(min: 55, ideal: 70, max: 80)
+                .width(min: 45, ideal: 55, max: 65)
                 TableColumn("値") { field in
                     fieldEditor(field)
                 }
-                .width(min: 220, ideal: 420)
+                .width(min: 150, ideal: 320)
             }
         }
+    }
+
+    private func fieldLabel(_ path: String) -> String {
+        let key = path.split(separator: ".").last.map(String.init) ?? path
+        return ["trackID": "MyMusic Track ID", "title": "曲名", "artist": "アーティスト", "album": "アルバム",
+                "playbackPreference": "Good / Bad 評価（−10〜＋10）", "favorite": "お気に入り",
+                "vocal": "ボーカルスコア", "instrumental": "インストスコア", "energy": "エネルギー",
+                "duration": "曲長（秒）", "fileSize": "ファイルサイズ（bytes）", "relativePath": "音源の相対パス",
+                "analysisVersion": "解析版", "analyzedAt": "解析日時", "integratedLoudness": "統合ラウドネス" ][key] ?? key
     }
 
     @ViewBuilder
@@ -528,11 +587,15 @@ struct MyMusicStatusView: View {
             }
         }
         .navigationTitle("MyMusic適用状況")
-        .toolbar {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
             Button("再読み込み", systemImage: "arrow.clockwise") {
                 Task { await store.load() }
             }
             .disabled(store.isLoading)
+
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
         .task { await store.load() }
     }

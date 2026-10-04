@@ -48,7 +48,11 @@ struct ListeningView: View {
                 .overlay(alignment: .bottom) { Divider() }
             }
         }
-        .toolbar {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+            if mode == .history {
+                CreateQueueButton(queue: queue, trackIDs: historyCandidateIDs)
+            }
             Menu("管理", systemImage: "ellipsis.circle") {
                 if mode == .favorites {
                     Button("お気に入りをすべて解除", role: .destructive) { resetConfirmation = .favorites }
@@ -58,6 +62,9 @@ struct ListeningView: View {
                         .disabled(store.events.isEmpty)
                 }
             }
+
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
         .confirmationDialog(
             resetConfirmation == .favorites ? "お気に入りをすべて解除しますか？" : "再生履歴をすべて削除しますか？",
@@ -81,7 +88,11 @@ struct ListeningView: View {
             listening: store, preferences: preferences, genrePresets: genrePresets,
             mode: .songs, scope: .favorites
         )
-        .toolbar { favoritePlaybackButtons }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {  favoritePlaybackButtons
+                Spacer(minLength: 0)
+            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
+        }
     }
 
     private var history: some View {
@@ -146,6 +157,12 @@ struct ListeningView: View {
                 trackRow(trackID: track.id, detail: "まだ再生していません")
             }
         }
+    }
+
+    private var historyCandidateIDs: [Track.ID] {
+        if historySection == 0 { return store.recentEvents.map(\.trackID) }
+        if historySection == 1 { return store.frequentTracks.map(\.trackID) }
+        return store.unplayedTracks.map(\.id)
     }
 
     private var favoritePlaybackButtons: some View {

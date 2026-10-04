@@ -5,6 +5,15 @@ import XCTest
 
 @MainActor
 final class FeatureAnalysisServiceTests: XCTestCase {
+    func testRequestCarriesSelectedConcurrency() async throws {
+        for concurrency in [2, 3, 6] {
+            let directory = try await FeatureRunFiles().create(tasks: [], concurrency: concurrency)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let object = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("request.json"))) as! [String: Any]
+            XCTAssertEqual(object["concurrency"] as? Int, concurrency)
+            XCTAssertEqual(object["version"] as? Int, 1)
+        }
+    }
     func testPartialJournalRecoversCompleteLinesAndIgnoresTruncatedTail() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

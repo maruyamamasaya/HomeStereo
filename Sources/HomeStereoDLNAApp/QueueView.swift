@@ -10,6 +10,7 @@ struct QueueView: View {
     @Bindable var playback: RendererPlaybackStore
     @Bindable var queue: QueueStore
     @Bindable var library: LibraryStore
+    @State private var clearConfirmation = false
     @State private var showsPlayedItems = false
     @State private var dropTargetID: QueueItem.ID?
     var body: some View {
@@ -31,6 +32,11 @@ struct QueueView: View {
             }
         }
         .navigationTitle("次はこちら")
+        .confirmationDialog("再生キューをすべてクリアしますか？", isPresented: $clearConfirmation) {
+            Button("キューをすべてクリア", role: .destructive) { Task { await queue.clear() } }
+        } message: {
+            Text("再生中の曲はそのまま続きます。音源・プレイリスト・再生履歴は削除されません。")
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let message = queue.errorMessage {
                 HStack(spacing: 10) {
@@ -51,26 +57,35 @@ struct QueueView: View {
     }
 
     private var queueSummary: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                .font(.title2)
-                .foregroundStyle(.tint)
-                .frame(width: 42, height: 42)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
-            VStack(alignment: .leading, spacing: 3) {
-                Text("再生キュー（最大\(QueueStore.maximumItemCount)曲）").font(.headline)
-                Text(queueSummaryText).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if playedItemCount > 0 {
-                Button(showsPlayedItems ? "再生済みを隠す" : "再生済みを表示（\(playedItemCount)）",
-                       systemImage: showsPlayedItems ? "eye.slash" : "eye") {
-                    showsPlayedItems.toggle()
-                    if !showsPlayedItems {
-                        queue.selectedItemIDs.formIntersection(Set(visibleQueueEntries.map(\.item.id)))
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                    .frame(width: 42, height: 42)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("再生キュー（最大\(QueueStore.maximumItemCount)曲）").font(.headline)
+                    Text(queueSummaryText).font(.caption).foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderless)
+                Spacer()
+            }
+            HStack(spacing: 12) {
+                Button("すべてクリア", systemImage: "trash") { clearConfirmation = true }
+                    .buttonStyle(.borderless)
+                    .disabled(queue.isTransitioning)
+                    .help("再生キューの全項目をクリア")
+                Spacer(minLength: 0)
+                if playedItemCount > 0 {
+                    Button(showsPlayedItems ? "再生済みを隠す" : "再生済みを表示（\(playedItemCount)）",
+                           systemImage: showsPlayedItems ? "eye.slash" : "eye") {
+                        showsPlayedItems.toggle()
+                        if !showsPlayedItems {
+                            queue.selectedItemIDs.formIntersection(Set(visibleQueueEntries.map(\.item.id)))
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                }
             }
         }
         .padding(14)
@@ -276,8 +291,14 @@ private enum QueueItemDragPayload {
 
 struct QueueModeControls: View {
     @Bindable var queue: QueueStore
+    var largeButtons = false
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if largeButtons { controls.buttonStyle(PlaybackBarButtonStyle()) }
+        else { controls.buttonStyle(.bordered) }
+    }
+
+    private var controls: some View {
         HStack(spacing: 8) {
             Button {
                 Task { await queue.toggleShuffle() }
@@ -296,7 +317,6 @@ struct QueueModeControls: View {
             .help("リピートを変更（現在：\(repeatLabel)）")
         }
         .labelStyle(.iconOnly)
-        .buttonStyle(.bordered)
     }
 
     private var nextRepeatMode: QueueRepeatMode {

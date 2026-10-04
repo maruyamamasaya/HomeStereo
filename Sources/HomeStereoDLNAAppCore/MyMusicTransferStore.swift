@@ -463,6 +463,7 @@ private enum MyMusicJSONEditorError: LocalizedError {
 @Observable
 public final class MyMusicJSONEditorStore {
     public var kind: MyMusicDocumentKind = .library
+    public private(set) var editsFeatures = false
     public var query = ""
     public var selectedRecordID: Int?
     public private(set) var isBusy = false
@@ -509,6 +510,7 @@ public final class MyMusicJSONEditorStore {
 
     public func createFromCurrentValues() async {
         await loadOperation {
+            guard !editsFeatures else { throw MyMusicJSONEditorError.invalidRoot }
             let value = try await transfer.export(kind)
             try setDocument(value.data)
         }
@@ -518,7 +520,7 @@ public final class MyMusicJSONEditorStore {
         guard !isBusy, let url = files.chooseImportURL() else { return }
         await loadOperation {
             let data = try files.read(from: url)
-            _ = try await transfer.preview(data, as: kind)
+            try await validateDocument(data)
             try setDocument(data)
         }
     }
@@ -533,13 +535,34 @@ public final class MyMusicJSONEditorStore {
             let data = try JSONSerialization.data(
                 withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             )
-            _ = try await transfer.preview(data, as: kind)
-            guard let url = files.chooseExportURL(defaultFileName: kind.fileName) else { return }
+            try await validateDocument(data)
+            guard let url = files.chooseExportURL(defaultFileName: exportFileName) else { return }
             try files.write(data, to: url)
-            completedMessage = "\(kind.fileName)を書き出しました。"
+            completedMessage = "\(exportFileName)を書き出しました。"
         } catch {
             errorMessage = "保存できませんでした。\n\(error.localizedDescription)"
         }
+    }
+
+    public var exportFileName: String { editsFeatures ? "track_features.json" : kind.fileName }
+
+    public func changeFeatureMode(_ enabled: Bool) {
+        guard editsFeatures != enabled else { return }
+        editsFeatures = enabled; clearDocument()
+    }
+
+    public func createFeatures(_ records: [FeatureRecord]) async {
+        guard editsFeatures else { return }
+        await loadOperation {
+            let data = try await Task.detached { try FeatureCodec.exportSnapshot(records) }.value
+            try setDocument(data)
+        }
+    }
+
+    private func validateDocument(_ data: Data) async throws {
+        if editsFeatures {
+            _ = try await Task.detached { try FeatureCodec.decode(data, fileName: "track_features.json") }.value
+        } else { _ = try await transfer.preview(data, as: kind) }
     }
 
     public func changeKind(to value: MyMusicDocumentKind) {
@@ -568,7 +591,8 @@ public final class MyMusicJSONEditorStore {
     }
 
     private var collectionKey: String {
-        switch kind {
+        if editsFeatures { return "tracks" }
+        return switch kind {
         case .library, .preferences: "tracks"
         case .playbackEvents: "events"
         case .playlists: "playlists"
@@ -587,7 +611,7 @@ public final class MyMusicJSONEditorStore {
         let object = try JSONSerialization.jsonObject(with: data)
         let value = try MyMusicEditableJSON(any: object)
         guard case let .object(root) = value else { throw MyMusicJSONEditorError.invalidRoot }
-        if kind == .playlists, root[collectionKey] == nil, root["tracks"] != nil {
+        if !editsFeatures, kind == .playlists, root[collectionKey] == nil, root["tracks"] != nil {
             document = .object([
                 "version": root["version"] ?? .number("1"),
                 collectionKey: .array([value])

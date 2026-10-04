@@ -48,7 +48,7 @@ public enum AnalyticsService {
             )
         }.sorted(by: rank)
 
-        let eventRows = events.prefix(500).map { event -> AnalyticsEventRow in
+        let eventRows = events.map { event -> AnalyticsEventRow in
             let track = tracksByID[event.homeStereoTrackID]
             return AnalyticsEventRow(
                 id: event.eventID, trackID: event.homeStereoTrackID,
@@ -69,7 +69,7 @@ public enum AnalyticsService {
         return AnalyticsSnapshot(
             generatedAt: now, overview: overview,
             topTracks: Array(summaries.filter { $0.playCount > 0 }.prefix(10)),
-            allTracks: summaries, recentEvents: eventRows,
+            allTracks: summaries, recentEvents: Array(eventRows.prefix(500)),
             historyDays: Dictionary(grouping: eventRows, by: { calendar.startOfDay(for: $0.startedAt) })
                 .map { AnalyticsHistoryDay(date: $0.key, events: $0.value) }
                 .sorted { $0.date > $1.date },

@@ -142,6 +142,7 @@ struct WindowFrameAutosave: NSViewRepresentable {
 struct NowPlayingPreferenceControls: View {
     @Bindable var queue: QueueStore
     @Bindable var preferences: PlaybackPreferenceStore
+    var buttonSize: CGFloat = 28
 
     var body: some View {
         if let track = queue.nowPlayingTrack {
@@ -170,16 +171,19 @@ struct NowPlayingPreferenceControls: View {
             Task { await preferences.adjustPreference(trackID: track.id, delta: delta) }
         } label: {
             Image(systemName: symbol + (active ? ".fill" : ""))
+                .font(.system(size: buttonSize >= 44 ? 21 : 14, weight: .medium))
                 .foregroundStyle(color)
-                .frame(width: 28, height: 28)
+                .frame(width: buttonSize, height: buttonSize)
+                .background(color.opacity(buttonSize >= 44 ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
                 .overlay(alignment: .bottomTrailing) {
                     Text("\(active ? abs(value) : 0)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .font(.system(size: buttonSize >= 44 ? 11 : 9, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.white)
-                        .frame(minWidth: 14, minHeight: 14)
+                        .frame(minWidth: buttonSize >= 44 ? 18 : 14, minHeight: buttonSize >= 44 ? 18 : 14)
                         .background(color, in: Capsule())
-                        .offset(x: 4, y: 3)
+                        .offset(x: buttonSize >= 44 ? 1 : 4, y: buttonSize >= 44 ? 1 : 3)
                         .accessibilityHidden(true)
                 }
         }

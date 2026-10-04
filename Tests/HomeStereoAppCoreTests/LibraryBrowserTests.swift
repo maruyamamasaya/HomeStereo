@@ -3,14 +3,21 @@ import XCTest
 @testable import HomeStereoAppCore
 
 final class LibraryBrowserTests: XCTestCase {
-    func testAlbumsUseAlbumArtistAndTitleAsCompositeIdentity() {
+    func testAlbumsMergeSameTitleAcrossDifferentArtists() {
         let tracks = [
             makeTrack(title: "One", artist: "Singer", albumArtist: "Band A", album: "Shared"),
             makeTrack(title: "Two", artist: "Guest", albumArtist: "Band B", album: "Shared"),
         ]
         let index = LibraryBrowserIndex(tracks: tracks)
-        XCTAssertEqual(index.albums.count, 2)
-        XCTAssertEqual(Set(index.albums.compactMap(\.albumArtist)), ["Band A", "Band B"])
+        XCTAssertEqual(index.albums.count, 1)
+        XCTAssertNil(index.albums.first?.albumArtist)
+        XCTAssertEqual(index.albums.first?.tracks.count, 2)
+        let filtered = LibraryBrowserIndex(tracks: [tracks[0]])
+        XCTAssertEqual(index.albums.first?.id, filtered.albums.first?.id)
+        XCTAssertEqual(index.artists.count, 2)
+        let searched = LibraryBrowserIndex(tracks: tracks, search: "Band A")
+        XCTAssertEqual(searched.albums.first?.tracks.count, 2)
+        XCTAssertEqual(searched.albums.first?.id, index.albums.first?.id)
     }
 
     func testTrackArtistIsNotReplacedByAlbumArtist() {
@@ -103,8 +110,9 @@ final class LibraryBrowserTests: XCTestCase {
         XCTAssertTrue(tagged.isHighResolutionAudio)
 
         let index = LibraryBrowserIndex(tracks: tracks + [tagged])
-        XCTAssertEqual(index.albums.first?.tracks.count, examples.count + 1)
-        XCTAssertEqual(index.artists.first?.tracks.count, examples.count + 1)
+        XCTAssertEqual(index.tracks.count, examples.count + 1)
+        XCTAssertEqual(index.albums.first?.tracks.count, examples.filter { !$0.expected }.count)
+        XCTAssertEqual(index.artists.first?.tracks.count, examples.filter { !$0.expected }.count)
     }
 
     func testRegularLibraryTrackExcludesWorkBGMAndHighResolutionTracks() {
@@ -129,6 +137,47 @@ final class LibraryBrowserTests: XCTestCase {
         XCTAssertFalse(work.isRegularLibraryTrack)
         XCTAssertFalse(highResolution.isRegularLibraryTrack)
         XCTAssertFalse(taggedHighResolution.isRegularLibraryTrack)
+    }
+
+    func testPresetFiltersCollectionMembershipAndPreservesSearchSemantics() {
+        let jazz = makeTrack(title: "Jazz One", artist: "Shared Artist", albumArtist: "Band", album: "Mixed", genre: "Jazz")
+        let jazzTwo = makeTrack(title: "Jazz Two", artist: "Shared Artist", albumArtist: "Band", album: "Mixed", genre: "Jazz")
+        let rock = makeTrack(title: "Rock", artist: "Shared Artist", albumArtist: "Band", album: "Mixed", genre: "Rock")
+        let other = makeTrack(title: "Other", artist: "Rock Artist", albumArtist: nil, album: "Rock Only", genre: "Rock")
+        let unassigned = makeTrack(title: "Unassigned", artist: "Unknown", albumArtist: nil, album: "Unknown", genre: nil)
+        let tracks = [jazz, jazzTwo, rock, other, unassigned]
+        let base = LibraryBrowserBase(tracks: tracks, sort: .title)
+        let index = LibraryBrowserIndex(base: base, presetGenreNames: ["Jazz"], includesUnassignedGenre: false)
+        XCTAssertEqual(index.albums.map(\.title), ["Mixed"])
+        XCTAssertEqual(index.artists.map(\.name), ["Shared Artist"])
+        XCTAssertEqual(Set(index.albums.flatMap { $0.tracks.map(\.id) }), [jazz.id, jazzTwo.id])
+        XCTAssertEqual(Set(index.artists.flatMap { $0.tracks.map(\.id) }), [jazz.id, jazzTwo.id])
+        let searched = LibraryBrowserIndex(base: base, search: "Jazz One", presetGenreNames: ["Jazz"])
+        XCTAssertEqual(searched.tracks.map(\.id), [jazz.id])
+        XCTAssertEqual(Set(searched.albums.first?.tracks.map(\.id) ?? []), [jazz.id, jazzTwo.id])
+        let restored = LibraryBrowserIndex(base: base)
+        XCTAssertEqual(restored.albums.count, 3)
+        XCTAssertEqual(restored.artists.count, 3)
+        let singleGenre = LibraryBrowserIndex(base: base, genre: "Rock")
+        XCTAssertEqual(Set(singleGenre.albums.flatMap { $0.tracks.map(\.id) }), [rock.id, other.id])
+        let empty = LibraryBrowserIndex(base: base, presetGenreNames: ["Missing"], includesUnassignedGenre: false)
+        XCTAssertTrue(empty.albums.isEmpty)
+        XCTAssertTrue(empty.artists.isEmpty)
+    }
+
+    func testCollectionsExcludeWorkAndHighResolutionWithoutRemovingTracks() {
+        let regular = makeTrack(title: "Regular", artist: "Mixed", albumArtist: nil, album: "Mixed", genre: "Jazz")
+        let work = makeTrack(title: "Work", artist: "Work Only", albumArtist: nil, album: "Work Only", genre: Track.workPlaybackGenre)
+        let high = makeTrack(title: "High", artist: "High Only", albumArtist: nil, album: "High Only", genre: Track.highResolutionGenre)
+        let mixedWork = makeTrack(title: "Mixed Work", artist: "Mixed", albumArtist: nil, album: "Mixed", genre: Track.workPlaybackGenre)
+        let tracks = [regular, work, high, mixedWork]
+        for index in [LibraryBrowserIndex(tracks: tracks), LibraryBrowserIndex(tracks: tracks, presetGenreNames: ["Jazz"])] {
+            XCTAssertEqual(Set(index.tracks.map(\.id)), Set(tracks.map(\.id)))
+            XCTAssertEqual(index.albums.map(\.title), ["Mixed"])
+            XCTAssertEqual(index.artists.map(\.name), ["Mixed"])
+            XCTAssertEqual(index.albums.first?.tracks.map(\.id), [regular.id])
+            XCTAssertEqual(index.artists.first?.tracks.map(\.id), [regular.id])
+        }
     }
 
     private func makeTrack(

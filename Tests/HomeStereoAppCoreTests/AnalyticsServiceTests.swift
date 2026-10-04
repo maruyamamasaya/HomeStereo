@@ -103,6 +103,29 @@ final class AnalyticsServiceTests: XCTestCase {
         XCTAssertEqual(snapshot.overview.last30DaysPlayCount, 2)
     }
 
+    func testCalendarKeepsHistoryBeyondRecentEventLimit() {
+        let song = track(title: "Archive")
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let events = (0..<620).map { event("event-\($0)", track: song, at: now.addingTimeInterval(-Double($0) * 3600), listened: 30) }
+        let snapshot = AnalyticsService.makeSnapshot(context: AnalyticsContext(tracks: [song], events: events, favorites: [], preferences: [], playlists: []), now: now)
+        XCTAssertEqual(snapshot.recentEvents.count, 500)
+        XCTAssertEqual(snapshot.historyDays.flatMap(\.events).count, 620)
+        XCTAssertTrue(snapshot.historyDays.flatMap(\.events).contains { $0.id == "event-619" })
+    }
+
+    func testVoiceHintsAndCanonicalIdentityRemainConservative() {
+        XCTAssertEqual(FeatureVoiceCategory.classify(["vocal": 0.8, "instrumental": 0.2]), .vocal)
+        XCTAssertEqual(FeatureVoiceCategory.classify(["vocal": 0.2, "instrumental": 0.8]), .instrumental)
+        XCTAssertEqual(FeatureVoiceCategory.classify(["vocal": 0.5, "instrumental": 0.55]), .uncertain)
+        XCTAssertEqual(FeatureVoiceCategory.classify(["vocal": .nan, "instrumental": 0.8]), .unavailable)
+        XCTAssertEqual(FeatureVoiceCategory.classify(nil), .unavailable)
+        let id = UUID()
+        XCTAssertTrue(FeatureIdentityCheck.matches(featureID: id, linkedIDs: [id], canonicalHomeCount: 1))
+        XCTAssertFalse(FeatureIdentityCheck.matches(featureID: id, linkedIDs: [id], canonicalHomeCount: 2))
+        XCTAssertFalse(FeatureIdentityCheck.matches(featureID: id, linkedIDs: [UUID()], canonicalHomeCount: 1))
+        XCTAssertFalse(FeatureIdentityCheck.matches(featureID: nil, linkedIDs: [], canonicalHomeCount: 0))
+    }
+
     private func track(title: String, artist: String? = nil) -> Track {
         Track(url: URL(fileURLWithPath: "/tmp/\(UUID()).flac"), title: title, artist: artist, duration: 100)
     }
