@@ -71,7 +71,7 @@ public struct BackupSettings: Codable, Equatable, Sendable {
 
 public struct HomeStereoBackup: Codable, Equatable, Sendable {
     public static let kindValue = "home-stereo-backup"
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public let kind: String
     public let schemaVersion: Int
     public let exportedAt: Date
@@ -80,11 +80,12 @@ public struct HomeStereoBackup: Codable, Equatable, Sendable {
     public let favorites: [BackupFavorite]
     public let playbackEvents: [BackupPlaybackEvent]
     public let settings: BackupSettings
+    public let state: StateBackupPayload?
 
-    public init(exportedAt: Date, appVersion: String, playlists: [BackupPlaylist], favorites: [BackupFavorite], playbackEvents: [BackupPlaybackEvent], settings: BackupSettings) {
-        kind = Self.kindValue; schemaVersion = Self.currentSchemaVersion; self.exportedAt = exportedAt
+    public init(exportedAt: Date, appVersion: String, playlists: [BackupPlaylist], favorites: [BackupFavorite], playbackEvents: [BackupPlaybackEvent], settings: BackupSettings, state: StateBackupPayload? = nil, schemaVersion: Int = 1) {
+        kind = Self.kindValue; self.schemaVersion = schemaVersion; self.exportedAt = exportedAt
         self.appVersion = appVersion; self.playlists = playlists; self.favorites = favorites
-        self.playbackEvents = playbackEvents; self.settings = settings
+        self.playbackEvents = playbackEvents; self.settings = settings; self.state = state
     }
 }
 
@@ -155,7 +156,8 @@ public enum BackupCodec {
 
     public static func validate(_ value: HomeStereoBackup) throws {
         guard value.kind == HomeStereoBackup.kindValue else { throw BackupContractError.unsupportedKind(value.kind) }
-        guard value.schemaVersion == HomeStereoBackup.currentSchemaVersion else { throw BackupContractError.unsupportedVersion(value.schemaVersion) }
+        guard (1...HomeStereoBackup.currentSchemaVersion).contains(value.schemaVersion) else { throw BackupContractError.unsupportedVersion(value.schemaVersion) }
+        guard (value.schemaVersion == 2) == (value.state != nil) else { throw BackupContractError.invalidStructure("保存状態とversionが一致しません") }
         guard Set(value.playlists.map(\.id)).count == value.playlists.count else { throw BackupContractError.invalidStructure("Playlist IDが重複") }
         guard Set(value.playbackEvents.map(\.id)).count == value.playbackEvents.count else { throw BackupContractError.invalidStructure("event IDが重複") }
         guard Set(value.favorites.map(\.track.trackID)).count == value.favorites.count else { throw BackupContractError.invalidStructure("Favoriteが重複") }
@@ -169,7 +171,7 @@ public enum BackupCodec {
             exportedAt: value.exportedAt, appVersion: value.appVersion,
             playlists: value.playlists.sorted { $0.id.uuidString < $1.id.uuidString },
             favorites: value.favorites.sorted { $0.track.trackID.uuidString < $1.track.trackID.uuidString },
-            playbackEvents: value.playbackEvents.sorted { $0.id.uuidString < $1.id.uuidString }, settings: value.settings
+            playbackEvents: value.playbackEvents.sorted { $0.id.uuidString < $1.id.uuidString }, settings: value.settings, state: value.state, schemaVersion: value.schemaVersion
         )
     }
 

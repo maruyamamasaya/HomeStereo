@@ -4,6 +4,8 @@ HomeStereoは、Mac上で選択した音源をLAN内DLNA RendererへHTTP配信�
 
 ## Current Phase
 
+2026-10-08: 保存状態JSON backup v2を含む現在の作業ツリーをRelease buildし、`/Applications/HomeStereo.app`へ正式配置・起動した（build `20261008073746`、bundle `jp.local.HomeStereo.Beta`）。署名／実行ファイルhash一致を確認。実データrestore・実機UI／DLNA再生は未確認。
+
 要求されたDLNA単曲再生からTrack Identityまでの実装と全体監査は完了。SRS-HG1／HG10の探索、低音量固定ファイル再生、再生中Stop、Audio Hijack経由のL/R分離と1秒segment送信まで実機確認済みで、音響同期と長時間driftの確認が残っている。
 
 独立したSony Stereo Bridge PoCは、HG1/HG10のUPnP能力probe、固定L/R PCM WAV、極小クリック10回のcommand timingまで実機成功。Phase 3 Web UIと1ms単位Delayに加え、BlackHole 2chのAUHAL probe／PCM取得／固定長L/R WAV segment、安全確認後のsegment順次送信経路を実装した。Music→Audio Hijack→BlackHoleのLEFT ONLY／RIGHT ONLY分離と、音量5/100でのHG1=LEFT／HG10=RIGHT各1秒segment送信を実機確認した。音響同期、10分drift、ライブHTTPは未評価。
@@ -229,3 +231,7 @@ MyMusic側もplaylistIDを保持して再Importで複製を作らない。既に
 ランキング用集計はAnalyticsService.rankingPageがMainActor外で行い、完成した上位50件だけを表示する。バー値・合計・代表IDを保持し、SwiftUI描画時に全曲を再集計しない。Albumは既存ライブラリと同じアルバム名単位へ統一し、異なるTrack Artistで分割しない。用途除外と期間集計の契約は維持する。
 
 ランキング画面版Release 20261004235246を正式配置へ更新・起動成功。XCTest 136件（3 skip）、Swift Testing 85件、Debug／Release build成功。実画面で専用ページ入口とArtistの画像・比較バーを確認。詳細: sessions/2026-10-04-ranking-artwork-pages.md。
+
+## 保存状態JSONバックアップ Beta（2026-10-08）
+
+書き出しをbackup schema v2へ拡張。SQLite v14全体、特徴量、PlaylistImportArchive、AnalysisRuns、選定設定を保持する。旧v1取り込みを維持し、旧形式にない既存tags/Playlist連携IDを保持する。v2は確認後にpendingへ準備し、次回起動時に旧rootを退避して復元する。音源とAnalyzer cache/modelは別保全。詳細と検証範囲は[JSON backup](docs/json-backup.md)。実Macでの移行・大容量性能・権限再設定は未検証。

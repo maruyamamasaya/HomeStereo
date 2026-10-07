@@ -17,21 +17,33 @@ public final class BackupStore {
     @ObservationIgnored private let playlists: PlaylistStore
     @ObservationIgnored private let listening: ListeningStore
     @ObservationIgnored private let files: any BackupFileServicing
+    public private(set) var isWorking = false
+    public private(set) var pendingStateRestore = false
+    public private(set) var restorePrepared = false
+    @ObservationIgnored private let stateBackup: StateBackupService?
     @ObservationIgnored private var pending: ResolvedBackup?
 
-    public init(repository: any LibraryPersisting, library: LibraryStore, playlists: PlaylistStore, listening: ListeningStore, files: any BackupFileServicing) {
+    public init(repository: any LibraryPersisting, library: LibraryStore, playlists: PlaylistStore, listening: ListeningStore, files: any BackupFileServicing, stateBackup: StateBackupService? = nil) {
         self.repository = repository; self.library = library; self.playlists = playlists
-        self.listening = listening; self.files = files
+        self.listening = listening; self.files = files; self.stateBackup = stateBackup
     }
 
     public func export() async {
+        guard !isWorking, !restorePrepared else { return }
+        isWorking = true
+        defer { isWorking = false }
         guard let url = files.chooseExportURL() else { return }
         lastImportResult = nil
         do {
-            let document = makeDocument(
+            let base = makeDocument(
                 exportedAt: .now,
                 appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
             )
+            guard let stateBackup else { throw BackupContractError.invalidStructure("保存状態のバックアップ先がありません") }
+            let payload = try await Task.detached { try stateBackup.snapshot() }.value
+            let document = HomeStereoBackup(exportedAt: base.exportedAt, appVersion: base.appVersion,
+                playlists: base.playlists, favorites: base.favorites, playbackEvents: base.playbackEvents,
+                settings: base.settings, state: payload, schemaVersion: 2)
             let data = try BackupCodec.encode(document)
             try data.write(to: url, options: .atomic)
             message = "バックアップを書き出しました。"
@@ -40,11 +52,20 @@ public final class BackupStore {
     }
 
     public func previewImport() async {
+        guard !isWorking, !restorePrepared else { return }
+        isWorking = true
+        defer { isWorking = false }
         guard let url = files.chooseImportURL() else { return }
+        pending = nil; pendingPreview = nil; pendingStateRestore = false
         message = nil
         lastImportResult = nil
         do {
             let document = try BackupCodec.decode(Data(contentsOf: url))
+            if let state = document.state {
+                guard let stateBackup else { throw BackupContractError.invalidStructure("保存状態を復元できません") }
+                try await Task.detached { try stateBackup.validate(state) }.value
+            }
+            pendingStateRestore = document.state != nil
             let resolved = Self.resolve(
                 document, tracks: library.tracks, existingPlaylists: playlists.playlists,
                 existingFavorites: listening.favorites, existingEvents: listening.events
@@ -54,8 +75,20 @@ public final class BackupStore {
     }
 
     public func applyImport() async {
+        guard !isWorking, !restorePrepared else { return }
+        isWorking = true
+        defer { isWorking = false }
         guard let pending else { return }
         do {
+            if let state = pending.document.state {
+                guard let stateBackup else { throw BackupContractError.invalidStructure("保存状態を復元できません") }
+                try await Task.detached { try stateBackup.stageRestore(state) }.value
+                restorePrepared = true
+                self.pending = nil; pendingPreview = nil; pendingStateRestore = false
+                message = "復元を準備しました。HomeStereoを終了して再起動してください。現在の保存状態は復元前フォルダへ退避されます。"
+                messageIsError = false
+                return
+            }
             try await repository.mergeBackup(playlists: pending.playlists, favorites: pending.favorites, events: pending.events)
             UserDefaults.standard.set(pending.document.settings.automaticLibraryUpdates, forKey: "LibraryAutoUpdateEnabled")
             await library.setAutoUpdateEnabled(pending.document.settings.automaticLibraryUpdates)
@@ -65,7 +98,7 @@ public final class BackupStore {
         } catch { message = error.localizedDescription; messageIsError = true }
     }
 
-    public func cancelImport() { pending = nil; pendingPreview = nil }
+    public func cancelImport() { pending = nil; pendingPreview = nil; pendingStateRestore = false }
     public func dismissMessage() { message = nil; messageIsError = false; lastImportResult = nil }
 
     public func makeDocument(exportedAt: Date, appVersion: String) -> HomeStereoBackup {
@@ -103,11 +136,12 @@ public final class BackupStore {
             case .ambiguous: ambiguous += 1; return reference.trackID
             }
         }
-        let importedPlaylists = document.playlists.map {
-            Playlist(
-                id: $0.id, name: $0.name, createdAt: $0.createdAt,
-                updatedAt: $0.updatedAt, kind: $0.kind,
-                items: $0.tracks.map { PlaylistItem(trackID: id($0)) }
+        let importedPlaylists = document.playlists.map { imported in
+            let existing = existingPlaylists.first { $0.id == imported.id }
+            return Playlist(
+                id: imported.id, myMusicPlaylistID: existing?.myMusicPlaylistID, name: imported.name, createdAt: imported.createdAt,
+                updatedAt: imported.updatedAt, kind: imported.kind, tags: existing?.tags ?? [],
+                items: imported.tracks.map { PlaylistItem(trackID: id($0)) }
             )
         }
         let importedFavorites = document.favorites.map { Favorite(trackID: id($0.track), addedAt: $0.addedAt) }

@@ -116,3 +116,7 @@ AnalyticsPeriodが端末Calendarで半開期間を作り、AnalyticsService.make
 曲のアートワークは既存CachedArtwork／ArtworkCacheを使用。Artist／Album／Genreは対象曲のID順で画像ありの先頭曲（なければ先頭曲）を固定選択する。未再生曲も代表選択のmembershipへ含め、同じ曲集合なら期間・指標変更で画像を変えない。画像未取得は既存music.note fallback。画像抽出の全曲事前実行や乱数は追加しない。
 
 ランキング用集計はAnalyticsService.rankingPageがMainActor外で行い、完成した上位50件だけを表示する。バー値・合計・代表IDを保持し、SwiftUI描画時に全曲を再集計しない。Albumは既存ライブラリと同じアルバム名単位へ統一し、異なるTrack Artistで分割しない。用途除外と期間集計の契約は維持する。
+
+## 保存状態backupの起動境界
+
+StateBackupServiceはSQLite backup APIと既存JSON/原本folderからStateBackupPayloadを生成する。BackupStoreはv1 mergeとv2 state restoreを分け、v2をpendingへ準備する。App initはrepository open前にpendingを再検証・適用し、旧rootを退避する。DB schemaとMyMusic wireは変えない。契約・対象範囲は[JSON backup](docs/json-backup.md)。

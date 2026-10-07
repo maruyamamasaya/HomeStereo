@@ -12,7 +12,7 @@ struct BackupView: View {
 
                 if let message = store.message {
                     resultBanner(
-                        title: store.messageIsError ? "バックアップ操作を完了できませんでした" : "バックアップを書き出しました",
+                        title: store.messageIsError ? "バックアップ操作を完了できませんでした" : "バックアップ操作",
                         message: message,
                         icon: store.messageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
                         color: store.messageIsError ? .orange : .green
@@ -28,19 +28,19 @@ struct BackupView: View {
                 HStack(alignment: .top, spacing: 16) {
                     informationCard(
                         title: "保存されるもの", icon: "checkmark.circle.fill", color: .green,
-                        items: ["プレイリスト", "お気に入り", "再生履歴", "フォルダの自動更新設定"]
+                        items: ["プレイリスト・曲順・タグ", "お気に入り・Good／Bad", "詳細再生履歴・集計", "曲ID対応・特徴量・音量解析", "ライブラリ登録・Import原本・選定設定"]
                     )
                     informationCard(
                         title: "保存されないもの", icon: "minus.circle.fill", color: .secondary,
-                        items: ["音源ファイル", "フォルダの場所とアクセス権", "スピーカーのIPアドレス", "ライブラリの索引"]
+                        items: ["音源ファイル", "Analyzerのモデル・cache", "別のMacでのアクセス権の保証", "すべての画面・スピーカー設定"]
                     )
                 }
 
                 GroupBox("使い方") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Label("1. 「バックアップを書き出す」で設定とコレクションをファイルに保存します。", systemImage: "1.circle.fill")
-                        Label("2. 復元時は内容を確認してから適用します。既存データは削除されません。", systemImage: "2.circle.fill")
-                        Label("3. 音楽フォルダは別途追加してください。曲は安全に照合されます。", systemImage: "3.circle.fill")
+                        Label("1. 「バックアップを書き出す」で現在の保存状態をファイルに保存します。", systemImage: "1.circle.fill")
+                        Label("2. 新形式は次回起動時に保存状態を置き換え、復元前の状態を退避します。", systemImage: "2.circle.fill")
+                        Label("3. 音源は別途保管してください。別のMacではフォルダのアクセス権を再設定します。旧形式は従来の取り込みです。", systemImage: "3.circle.fill")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
@@ -49,6 +49,9 @@ struct BackupView: View {
             if let preview = store.pendingPreview {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 13) {
+                        if store.pendingStateRestore {
+                            Text("保存時点のライブラリ、評価、詳細履歴、タグ、曲ID対応、特徴量を次回起動時に復元します。現在の状態は退避されます。音源は含まれません。")
+                        } else {
                         Label("復元する内容を確認", systemImage: "doc.text.magnifyingglass")
                             .font(.title3.bold())
                         HStack(spacing: 24) {
@@ -64,8 +67,9 @@ struct BackupView: View {
                         .font(.subheadline)
                         Text("見つからない曲や候補が複数ある曲は、別の曲へ勝手に接続しません。既存データも削除しません。")
                             .font(.caption).foregroundStyle(.secondary)
+                        }
                         HStack {
-                            Button("この内容を復元", systemImage: "arrow.down.doc.fill") { Task { await store.applyImport() } }
+                            Button(store.pendingStateRestore ? "復元を準備（再起動が必要）" : "この内容を復元", systemImage: "arrow.down.doc.fill") { Task { await store.applyImport() } }
                                 .buttonStyle(.borderedProminent)
                             Button("キャンセル", role: .cancel) { store.cancelImport() }
                         }
@@ -78,6 +82,7 @@ struct BackupView: View {
             .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
         }
+        .disabled(store.isWorking)
         .navigationTitle("バックアップ")
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack {
@@ -85,7 +90,7 @@ struct BackupView: View {
             Button("バックアップから復元", systemImage: "square.and.arrow.down") { Task { await store.previewImport() } }
 
                 Spacer(minLength: 0)
-            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
+            }.disabled(store.isWorking || store.restorePrepared).padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
     }
 
@@ -96,7 +101,7 @@ struct BackupView: View {
                 .frame(width: 76, height: 76).background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
             VStack(alignment: .leading, spacing: 5) {
                 Text("コレクションを安全に保存").font(.title.bold())
-                Text("プレイリストやお気に入りを、移行しやすいバックアップファイルにまとめます。")
+                Text("曲の紐付けと詳細な利用記録を、検証付きJSONに保存します。")
                     .foregroundStyle(.secondary)
             }
         }

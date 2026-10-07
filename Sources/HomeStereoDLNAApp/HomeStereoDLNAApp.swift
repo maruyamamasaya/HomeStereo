@@ -32,7 +32,12 @@ struct HomeStereoDLNAApp: App {
 
     init() {
         let repository: SQLiteLibraryRepository
-        do { repository = try SQLiteLibraryRepository() }
+        let stateBackup: StateBackupService
+        do {
+            stateBackup = StateBackupService(root: try StateBackupService.defaultRoot())
+            try stateBackup.applyPendingRestore()
+            repository = try SQLiteLibraryRepository()
+        }
         catch { fatalError("Library databaseを初期化できません: \(error.localizedDescription)") }
         let featureStore: TrackFeatureStore
         do {
@@ -89,7 +94,8 @@ struct HomeStereoDLNAApp: App {
         ))
         _backup = State(initialValue: BackupStore(
             repository: repository, library: libraryStore, playlists: playlistStore,
-            listening: listeningStore, files: BackupFileService()
+            listening: listeningStore, files: BackupFileService(),
+            stateBackup: stateBackup
         ))
         let myMusicStatusStore = MyMusicStatusStore(repository: repository)
         _myMusicStatus = State(initialValue: myMusicStatusStore)

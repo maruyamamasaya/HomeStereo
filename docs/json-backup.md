@@ -1,34 +1,41 @@
 # HomeStereo JSON Backup contract
 
-`kind: "home-stereo-backup"`、`schemaVersion: 1`を正式な交換契約とする。文書はUTF-8の単一JSONで、日時は小数秒を含むISO-8601 UTC、IDはUUID文字列、数値は有限かつ非負である。完全なfixtureは[`Tests/Fixtures/home-stereo-backup-v1.json`](../Tests/Fixtures/home-stereo-backup-v1.json)を参照する。
+更新: 2026-10-08。アプリの書き出しは`kind: "home-stereo-backup"`、`schemaVersion: 2`。既存schemaVersion 1の読み込みを維持する。SQLite schema v14、MyMusic連携JSONのwire形式は変更しない。
 
-## Top-level
+## 新形式v2の保存範囲
 
-```json
-{
-  "kind": "home-stereo-backup",
-  "schemaVersion": 1,
-  "exportedAt": "2026-09-24T00:00:00.000Z",
-  "appVersion": "1.0",
-  "playlists": [],
-  "favorites": [],
-  "playbackEvents": [],
-  "settings": { "automaticLibraryUpdates": true }
-}
-```
+既存のplaylists/favorites/playbackEvents/settingsに加え、`state`を持つ。stateは`databaseSchemaVersion`、`files`、`settings`からなる。各fileは相対path、base64のdata、SHA-256。settingsは選定UserDefaultsをbinary plistにしたbase64である。
 
-Playlistは`id`、`name`、`createdAt`、`updatedAt`、順序を保つ`tracks`を持つ。Favoriteは`track`と`addedAt`、Playback Eventは`id`、`track`、`startedAt`、`playedSeconds`、`outcome`（`completed`または`stopped`）を持つ。
+- `Library.sqlite3`: SQLite backup APIでsnapshot。全テーブルのID・曲順・タグ・Favorite・Good/Bad・簡易/詳細Events・集計・MyMusic link/送信世代・genre preset・queue・folder bookmarkを保持する。
+- `track-features.json`: 特徴量、音量解析、解析由来と両曲IDを保持する。
+- `PlaylistImportArchive`、`AnalysisRuns`: 実在する全通常ファイルを保持する。列挙/読取失敗・symlinkでは書き出しを中止し、無言で部分backupを作らない。
+- settings: `LibraryAutoUpdateEnabled`、`audio.normalization.enabled`、`analysis.concurrency`、`appearance.theme`。
 
-Track参照は`trackID`、`relativePath`、`fileSize`、`duration`、`title`、任意の`artist`／`album`からなる。絶対path、bookmark、機器IP、一時HTTP URL、音源、Library index、Artwork、認証情報は含めない。
+音源、Analyzer companionのmodel/cache、すべてのUserDefaults、スピーカー設定、Artwork cache等は対象外。フォルダのpath/bookmarkはDBに残るが、別Macで同じアクセス権が使える保証はない。音源を別途保存し、必要に応じて登録済みフォルダへのアクセスを再設定する。新Macへの実機移行は未検証。
 
-## Validation and import
+JSONは単一ファイルだがbase64のため元ファイルより大きい。メモリへpayloadを読み込む。大容量履歴/原本/AnalysisRunsでの性能・空き容量は実機計測が必要。DB snapshotはSQLite単位で整合し、別JSONや解析途中ファイルまで全体を凍結するtransactionではない。再生中の未確定sessionは確定済み履歴とは別である。
 
-Importは文書全体を先にdecode・検証し、kind／version、不正UUID／日時、重複Playlist・Favorite・event ID、NaN／Infinity、負数を拒否する。Track照合はID、相対path一意一致、相対path＋size＋durationの一意一致、metadata＋durationの一意一致の順で行う。曖昧候補は接続せず、未解決とともにpreviewへ表示する。
+## v2復元
 
-確認後、Playlist更新／追加、Favorite merge、event ID重複排除を単一SQLite transactionで適用する。JSONにない既存データは削除しない。失敗時はrollbackする。ImportはQueue、再生、SRS-HG1を操作しない。
+1. 文書全体をdecodeしversion、hash、許可path、plist、DB integrity/foreign key/schema、Feature modelを確認する。
+2. 確認画面は保存状態の置き換えと再起動の必要性を示す。確認後だけpending directoryへ保存する。live DBは変更しない。
+3. 次回起動時、SQLite repositoryを開く前にpendingを再検証し適用する。現在のHomeStereo rootはApplication Support内の`HomeStereo-before-restore-<UUID>`へ退避して保持する。
+4. 選定設定を戻し、各Storeが既存形式からloadする。復元準備後の追加backup操作は抑止する。
 
-## Stable output and migration
+退避は自動削除しない。復元前に空き容量が必要。復元時に書き出されていた状態へ戻るため、それ以降の変更が現在状態には含まれなくなることを確認画面で明示する。既存JSONのmergeとは異なる。
 
-object key、Playlist、Favorite、Playback Eventの順序を安定化し、Playlist内の曲順だけは意味のある順序として保持する。`exportedAt`以外が同じ入力なら同一内容になる。
+現行受信側はDB schema v14だけを許可し、未知version/schemaを推測変換しない。旧アプリは新v2を読めない。既存v1 backupは新アプリで引き続き読める。
 
-互換性を壊す変更ではschemaVersionを増やす。新versionを追加するときは、旧version専用DTOを保持し、検証後に最新の内部表現へ明示migrationする。未知versionを推測して読み替えない。version 1 fixtureは回帰資産として永続的に保持する。
+## 旧形式v1
+
+UTF-8のJSON、日時は小数秒付きISO-8601 UTC、UUID文字列、有限非負数。`Tests/Fixtures/home-stereo-backup-v1.json`を回帰資産として維持する。
+
+v1はPlaylistのID/名称/日時/kind/順序付き曲参照、Favorite、簡易Playback Event、automaticLibraryUpdatesだけを持つ。詳細Events、評価、link、tags、featuresは持たない。
+
+Importは文書全体を検証してからID、相対path、size/duration、metadataで照合する。曖昧/未解決は元ID参照を保持する。Playlist更新、Favorite merge、event ID重複排除をSQLite transactionで行い、文書にないデータを全削除しない。既存PlaylistのtagsとMyMusic Playlist IDは、v1にないため維持する。新Playlistのtagsは空。失敗時はrollbackする。
+
+## 検証
+
+`StateBackupTests`はtemp保存先でJSON往復、pending、次回起動適用、repository再openを通し、代表10テーブルの全field、Playlist item ID/曲順/重複参照/tags、評価、詳細event、link、累計、fingerprint、feature/音量原本bytes、settings、Import原本の一致を確認する。破損DBとpath traversalがpendingを作らないことも確認する。
+
+旧v1 fixture往復と`LegacyBackupResolutionTests`で既存tags/連携ID保持を確認する。これらは実データ/別Macの権限/大容量の操作確認の代用ではない。

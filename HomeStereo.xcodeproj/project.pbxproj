@@ -6,6 +6,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D81000000000000000000001 /* StateBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D82000000000000000000001 /* StateBackupService.swift */; };
 		A10000000000000000000001 /* Track.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* Track.swift */; };
 		A10000000000000000000002 /* Protocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* Protocols.swift */; };
 		A10000000000000000000003 /* PlaybackQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* PlaybackQueue.swift */; };
@@ -80,6 +81,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		D82000000000000000000001 /* StateBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateBackupService.swift; sourceTree = "<group>"; };
 		A20000000000000000000001 /* Track.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Track.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* Protocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocols.swift; sourceTree = "<group>"; };
 		A20000000000000000000003 /* PlaybackQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackQueue.swift; sourceTree = "<group>"; };
@@ -196,6 +198,7 @@
 				F20000000000000000000001 /* PlaylistTagRules.swift */,
 				A20000000000000000000013 /* ListeningModels.swift */,
 				A20000000000000000000014 /* BackupContract.swift */,
+				D82000000000000000000001 /* StateBackupService.swift */,
 				A20000000000000000000015 /* MyMusicInterchangeModels.swift */,
 				A20000000000000000000016 /* MyMusicJSONContract.swift */,
 				A20000000000000000000017 /* MyMusicJSONService.swift */,
@@ -365,6 +368,7 @@
 				F10000000000000000000001 /* PlaylistTagRules.swift in Sources */,
 				A10000000000000000000011 /* ListeningModels.swift in Sources */,
 				A10000000000000000000012 /* BackupContract.swift in Sources */,
+				D81000000000000000000001 /* StateBackupService.swift in Sources */,
 				A10000000000000000000013 /* MyMusicInterchangeModels.swift in Sources */,
 				A10000000000000000000014 /* MyMusicJSONContract.swift in Sources */,
 				A10000000000000000000015 /* MyMusicJSONService.swift in Sources */,
