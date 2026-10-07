@@ -11,6 +11,8 @@ struct PlaylistsView: View {
     @Bindable var store: PlaylistStore
     @Bindable var queue: QueueStore
     @Bindable var library: LibraryStore
+    @Bindable var listening: ListeningStore
+    @Bindable var preferences: PlaybackPreferenceStore
     @State private var newName = ""
     @State private var renameValue = ""
     @State private var showsCreateDialog = false
@@ -18,49 +20,60 @@ struct PlaylistsView: View {
     @State private var confirmsPlaylistDelete = false
     @State private var confirmsItemDelete = false
     @State private var playlistForTrackPicker: Playlist?
+    @State private var playlistForMerge: Playlist?
+    @State private var playlistForTagEditor: Playlist?
+    @State private var selectedTag: String?
+    @State private var filtersUntagged = false
+    @State private var selectedKind: PlaylistKind = .regular
 
     var body: some View {
-        HSplitView {
-            playlistSidebar
-                .frame(minWidth: 220, idealWidth: 260, maxWidth: 320, maxHeight: .infinity)
+        VStack(spacing: 0) {
+            playlistHeader
+            Divider()
+            HSplitView {
+                playlistSidebar
+                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 320, maxHeight: .infinity)
 
-            if let playlist = selectedPlaylist {
-                playlistDetail(playlist)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ContentUnavailableView {
-                    Label("プレイリストを選択", systemImage: "music.note.list")
-                } description: {
-                    Text(visiblePlaylists.isEmpty
-                         ? emptyDescription
-                         : "左の一覧からプレイリストを選んでください。")
-                } actions: {
-                    if visiblePlaylists.isEmpty {
-                        Button(createTitle, systemImage: "plus") { beginCreate() }
+                if let playlist = selectedPlaylist {
+                    playlistDetail(playlist)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ContentUnavailableView {
+                        Label("プレイリストを選択", systemImage: "music.note.list")
+                    } description: {
+                        Text(visiblePlaylists.isEmpty
+                             ? emptyDescription
+                             : "左の一覧からプレイリストを選んでください。")
+                    } actions: {
+                        if visiblePlaylists.isEmpty {
+                            Button(createTitle, systemImage: "plus") { beginCreate() }
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("プレイリスト")
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack {
-            Button("プレイリストを作成", systemImage: "plus") { beginCreate() }
-            Button("M3U8を読み込む", systemImage: "square.and.arrow.down") { Task { await store.importM3U8() } }
-            if let playlist = selectedPlaylist {
-                playlistManagementMenu(playlist)
+        .onChange(of: selectedKind) { _, kind in
+            selectedTag = nil
+            filtersUntagged = false
+            store.activate(kind)
+        }
+        .onChange(of: visiblePlaylists.map(\.id)) { _, ids in
+            let visible = Set(ids)
+            store.selectedPlaylistIDs.formIntersection(visible)
+            if let id = store.selectedPlaylistID, !visible.contains(id) {
+                store.selectedPlaylistID = nil
+                store.selectedItemIDs = []
             }
-
-                Spacer(minLength: 0)
-            }.padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
         }
         .alert("新しいプレイリスト", isPresented: $showsCreateDialog) {
             TextField("プレイリスト名", text: $newName)
             Button("作成") {
                 let name = newName
                 newName = ""
-                Task { await store.create(name: name) }
+                Task { await store.create(name: name, kind: selectedKind) }
             }
             .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("キャンセル", role: .cancel) { newName = "" }
@@ -100,9 +113,47 @@ struct PlaylistsView: View {
         } message: {
             Text("音源ファイルは削除されません。")
         }
+        .sheet(item: $playlistForMerge) { first in
+            PlaylistMergeView(store: store, first: first,
+                candidates: store.playlists.filter { $0.id != first.id && $0.kind == first.kind })
+        }
+        .sheet(item: $playlistForTagEditor) { playlist in
+            PlaylistTagEditorView(store: store, playlist: playlist, suggestedTags: allTags)
+        }
+        .onChange(of: allTags) { _, tags in
+            if let selectedTag, !tags.contains(selectedTag) { self.selectedTag = nil }
+        }
         .sheet(item: $playlistForTrackPicker) { playlist in
             PlaylistTrackPicker(store: store, playlist: playlist, tracks: library.tracks)
         }
+    }
+
+    private var playlistHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("プレイリストの種類", selection: $selectedKind) {
+                Text("通常").tag(PlaylistKind.regular)
+                Text("作業用BGM").tag(PlaylistKind.work)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 280)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { playlistHeaderActions }
+                    .fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .leading, spacing: 8) { playlistHeaderActions }
+            }
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    tagFilterButton("すべて", tag: nil)
+                    tagFilterButton("タグなし", tag: nil, untagged: true)
+                    ForEach(allTags, id: \.self) { tag in tagFilterButton(tag, tag: tag) }
+                }
+            }
+            .frame(height: 36)
+            .scrollIndicators(.hidden)
+            .accessibilityLabel("プレイリストのタグ絞り込み")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 10).homeStereoThemeBar()
     }
 
     private var playlistSidebar: some View {
@@ -127,6 +178,7 @@ struct PlaylistsView: View {
                             }
                             Divider()
                             Button("名称を変更") { beginRename(playlist) }
+                            Button("タグを編集") { playlistForTagEditor = playlist }
                             Button("プレイリストを削除", role: .destructive) {
                                 store.selectedPlaylistIDs = [playlist.id]
                                 confirmsPlaylistDelete = true
@@ -210,6 +262,11 @@ struct PlaylistsView: View {
                 .font(.caption.bold()).foregroundStyle(.secondary)
             Text(playlist.name).font(.system(size: 28, weight: .bold)).lineLimit(2)
             Text(playlistSummary(playlist, compact: false)).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text(playlist.tags.isEmpty ? "タグなし" : playlist.tags.joined(separator: " · "))
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("タグを編集", systemImage: "tag") { playlistForTagEditor = playlist }
+            }
             HStack(spacing: 10) {
                 Button("再生", systemImage: "play.fill") { Task { await store.play(playlist, shuffled: false) } }
                     .buttonStyle(.borderedProminent)
@@ -217,6 +274,12 @@ struct PlaylistsView: View {
                 Button("シャッフル", systemImage: "shuffle") { Task { await store.play(playlist, shuffled: true) } }
                     .buttonStyle(.bordered)
                     .disabled(!playback.canPlaySelectedOutput || playableTrackIDs(playlist).isEmpty)
+                Button("キューに追加", systemImage: "text.append") {
+                    Task { await store.appendToQueue(trackIDs: playableTrackIDs(playlist)) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(playableTrackIDs(playlist).isEmpty)
+                .help("このプレイリストを再生キューの最後に追加")
                 Button("曲を追加", systemImage: "plus") { playlistForTrackPicker = playlist }
                     .buttonStyle(.bordered)
             }
@@ -248,6 +311,30 @@ struct PlaylistsView: View {
                             Label("ファイルが見つかりません", systemImage: "exclamationmark.triangle")
                                 .labelStyle(.iconOnly).foregroundStyle(.orange)
                         }
+                        Button {
+                            Task { await listening.toggleFavorite(track.id) }
+                        } label: {
+                            Image(systemName: listening.isFavorite(track.id) ? "heart.fill" : "heart")
+                                .foregroundStyle(listening.isFavorite(track.id) ? Color.pink : Color.secondary)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(listening.isFavorite(track.id) ? "お気に入りから削除" : "お気に入りに追加")
+                        .accessibilityLabel("\(track.title)を\(listening.isFavorite(track.id) ? "お気に入りから削除" : "お気に入りに追加")")
+                        TrackPreferenceControls(track: track, preferences: preferences)
+                        Button {
+                            Task { await store.appendToQueue(trackIDs: [track.id]) }
+                        } label: {
+                            Image(systemName: "plus")
+                                .foregroundStyle(Color.secondary)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(track.scanState != .available)
+                        .help(track.scanState == .available ? "再生キューの最後に追加" : "この曲のファイルが見つかりません")
+                        .accessibilityLabel("\(track.title)を再生キューの最後に追加")
                         Text(formatPlaylistDuration(track.duration)).monospacedDigit().foregroundStyle(.secondary)
                     } else {
                         Image(systemName: "questionmark.square.dashed")
@@ -297,6 +384,8 @@ struct PlaylistsView: View {
 
     private func playlistManagementMenu(_ playlist: Playlist) -> some View {
         Menu("プレイリストを管理", systemImage: "ellipsis.circle") {
+            Button("別のプレイリストと統合", systemImage: "square.stack.3d.up") { playlistForMerge = playlist }
+                .disabled(!store.playlists.contains { $0.id != playlist.id && $0.kind == playlist.kind })
             Button("名称を変更", systemImage: "pencil") { beginRename(playlist) }
             Button("ライブラリから曲を追加", systemImage: "plus") { playlistForTrackPicker = playlist }
             Button("現在の再生キューを追加", systemImage: "text.append") {
@@ -362,11 +451,35 @@ struct PlaylistsView: View {
         showsRenameDialog = true
     }
 
-    private var visiblePlaylists: [Playlist] { store.playlists }
-    private var selectedPlaylist: Playlist? { store.selectedPlaylist }
-    private var createTitle: String { "プレイリストを作成" }
+    @ViewBuilder
+    private var playlistHeaderActions: some View {
+        Button(createTitle, systemImage: "plus") { beginCreate() }
+        Button("M3U8を読み込む", systemImage: "square.and.arrow.down") {
+            Task { await store.importM3U8(kind: selectedKind) }
+        }
+        if let playlist = selectedPlaylist { playlistManagementMenu(playlist) }
+    }
+
+    private func tagFilterButton(_ title: String, tag: String?, untagged: Bool = false) -> some View {
+        let selected = untagged ? filtersUntagged : (selectedTag == tag && !filtersUntagged)
+        return Button(title) {
+            selectedTag = tag
+            filtersUntagged = untagged
+        }
+            .fixedSize()
+            .buttonStyle(.bordered)
+            .tint(selected ? Color.accentColor : Color.secondary)
+            .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    private var allTags: [String] { store.tags(of: selectedKind) }
+    private var visiblePlaylists: [Playlist] { store.playlists(of: selectedKind, tagged: selectedTag, untaggedOnly: filtersUntagged) }
+    private var selectedPlaylist: Playlist? { visiblePlaylists.first { $0.id == store.selectedPlaylistID } }
+    private var createTitle: String { selectedKind == .work ? "作業用を作成" : "通常用を作成" }
     private var emptyDescription: String {
-        "通常の曲、作業用BGM、ハイレゾを目的に合わせて自由にまとめられます。"
+        if filtersUntagged { return "タグ未設定のプレイリストがありません。「すべて」で絞り込みを解除できます。" }
+        if selectedTag != nil { return "このタグのプレイリストがありません。「すべて」で絞り込みを解除できます。" }
+        return selectedKind == .work ? "作業用BGMのプレイリストを作成できます。" : "通常用のプレイリストを作成できます。"
     }
 }
 
@@ -485,4 +598,64 @@ private func formatPlaylistCollectionDuration(_ seconds: TimeInterval) -> String
     let minutes = Int(seconds / 60)
     if minutes < 60 { return "\(minutes)分" }
     return "\(minutes / 60)時間\(minutes % 60)分"
+}
+
+private struct PlaylistMergeView: View {
+    let store: PlaylistStore
+    let first: Playlist
+    let candidates: [Playlist]
+    @Environment(\.dismiss) private var dismiss
+    @State private var secondID: UUID?
+    @State private var name = "統合プレイリスト"
+    @State private var deduplicate = true
+    @State private var removeSources = false
+    @State private var isSaving = false
+    @State private var error: String?
+
+    private var second: Playlist? { candidates.first { $0.id == secondID } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("プレイリストを統合").font(.title2.bold())
+            Text("1つ目：\(first.name)")
+            Picker("2つ目", selection: $secondID) {
+                Text("選択してください").tag(Optional<UUID>.none)
+                ForEach(candidates) { Text($0.name).tag(Optional($0.id)) }
+            }
+            TextField("新しいプレイリスト名", text: $name)
+            Toggle("重複する曲は1曲にまとめる", isOn: $deduplicate)
+            Toggle("統合後に元の2つのプレイリストを削除", isOn: $removeSources)
+            Text("曲順は1つ目、2つ目の順です。タグは両方から引き継ぎます。音源ファイルは削除されません。")
+                .font(.callout).foregroundStyle(.secondary)
+            if let second {
+                if let preview = try? PlaylistMerge.make(first: first, second: second, name: name, deduplicate: deduplicate) {
+                    Text("新しいリスト：\(preview.items.count)曲・タグ\(preview.tags.count)個")
+                } else {
+                    Text("名前とタグの上限（20個）を確認してください。タグが多い場合は元のリストを編集してください。")
+                        .foregroundStyle(.red)
+                }
+            }
+            if let error { Text(error).foregroundStyle(.red) }
+            HStack {
+                Spacer()
+                Button("キャンセル", role: .cancel) { dismiss() }
+                Button(removeSources ? "作成して元の2件を削除" : "統合して作成") {
+                    guard let second else { return }
+                    isSaving = true
+                    error = nil
+                    Task {
+                        do {
+                            try await store.merge(first: first, second: second, name: name,
+                                deduplicate: deduplicate, removeSources: removeSources)
+                            dismiss()
+                        } catch { self.error = error.localizedDescription; isSaving = false }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(second == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24).frame(width: 520)
+        .disabled(isSaving)
+        .interactiveDismissDisabled(isSaving)
+    }
 }

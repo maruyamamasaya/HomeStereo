@@ -5,6 +5,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
     public static let currentSchemaVersion = 14
     private let lock = NSRecursiveLock()
     private var database: OpaquePointer?
+    private let playlistArchiveDirectory: URL
 
     public convenience init() throws {
         let base = try FileManager.default.url(
@@ -16,6 +17,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
     }
 
     public init(databaseURL: URL) throws {
+        playlistArchiveDirectory = databaseURL.deletingLastPathComponent().appendingPathComponent("PlaylistImportArchive", isDirectory: true)
         guard sqlite3_open(databaseURL.path, &database) == SQLITE_OK else {
             throw UserFacingError.persistenceFailed("SQLite databaseを開けません。")
         }
@@ -289,7 +291,11 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
     }
 
     public func loadPlaylists() async throws -> [Playlist] {
-        try withLock {
+        try withLock { try loadPlaylistStatements() }
+    }
+
+    private func loadPlaylistStatements() throws -> [Playlist] {
+        do {
             let rows = try query("SELECT id, mymusic_playlist_id, name, created_at, updated_at, kind, tags_json FROM playlists ORDER BY name COLLATE NOCASE") { statement in
                 (UUID(uuidString: text(statement, 0))!, optionalText(statement, 1).flatMap(UUID.init(uuidString:)),
                  text(statement, 2), date(statement, 3), date(statement, 4), text(statement, 5), Self.decodeTags(text(statement, 6)))
@@ -308,12 +314,64 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
         }
     }
 
+    public func appendUniqueTracks(_ trackIDs: [Track.ID], to playlistIDs: [UUID]) async throws -> Int {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let current = try loadPlaylistStatements()
+                let destinationIDs = Set(playlistIDs)
+                let destinations = current.filter { destinationIDs.contains($0.id) }
+                guard destinations.count == destinationIDs.count else {
+                    throw UserFacingError.persistenceFailed("追加先のプレイリストが削除されました。選び直してください。")
+                }
+                var added = 0
+                for var playlist in destinations {
+                    var existing = Set(playlist.items.map(\.trackID))
+                    let missing = trackIDs.filter { existing.insert($0).inserted }
+                    guard !missing.isEmpty else { continue }
+                    playlist.items.append(contentsOf: missing.map { PlaylistItem(trackID: $0) })
+                    playlist.updatedAt = max(.now, playlist.updatedAt)
+                    try savePlaylistStatements(playlist)
+                    added += missing.count
+                }
+                try execute("COMMIT")
+                return added
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
+    }
+
     public func savePlaylist(_ playlist: Playlist) async throws {
         try withLock {
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
                 try savePlaylistStatements(playlist)
                 try execute("COMMIT")
+            } catch { try? execute("ROLLBACK"); throw error }
+        }
+    }
+
+    public func mergePlaylists(first: Playlist, second: Playlist, name: String, deduplicate: Bool, removeSources: Bool) async throws -> Playlist {
+        let merged = try PlaylistMerge.make(first: first, second: second, name: name, deduplicate: deduplicate)
+        return try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let current = try loadPlaylistStatements()
+                guard current.first(where: { $0.id == first.id }) == first,
+                      current.first(where: { $0.id == second.id }) == second else {
+                    throw UserFacingError.persistenceFailed("統合画面を開いた後に元のリストが変更されました。画面を開き直してください。")
+                }
+                if removeSources {
+                    try PlaylistImportArchive.preserve(try JSONEncoder().encode([first, second]),
+                        prefix: "merge-before", directory: playlistArchiveDirectory)
+                }
+                try savePlaylistStatements(merged)
+                if removeSources {
+                    for id in [first.id, second.id] {
+                        try update("DELETE FROM playlists WHERE id = ?") { bind(id.uuidString, to: $0, at: 1) }
+                    }
+                }
+                try execute("COMMIT")
+                return merged
             } catch { try? execute("ROLLBACK"); throw error }
         }
     }
@@ -906,7 +964,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
     }
 
     public func mergeMyMusicPlaylists(
-        _ imported: [MyMusicPlaylistRecord]
+        _ imported: [MyMusicPlaylistRecord], original: Data? = nil, expectedPlaylists: [Playlist]? = nil
     ) async throws -> MyMusicPlaylistPersistenceResult {
         try withLock {
             try execute("BEGIN IMMEDIATE TRANSACTION")
@@ -922,8 +980,24 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
                      name: text(statement, 2), createdAt: date(statement, 3), updatedAt: date(statement, 4),
                      kind: text(statement, 5), tags: Self.decodeTags(text(statement, 6)))
                 }
+                let snapshots = try existing.map { old -> Playlist in
+                    let items = try query("SELECT id, track_id FROM playlist_items WHERE playlist_id = ? ORDER BY position",
+                        binds: { bind(old.id.uuidString, to: $0, at: 1) }) {
+                            PlaylistItem(id: UUID(uuidString: text($0, 0))!, trackID: UUID(uuidString: text($0, 1))!)
+                        }
+                    return Playlist(id: old.id, myMusicPlaylistID: old.externalID, name: old.name,
+                        createdAt: old.createdAt, updatedAt: old.updatedAt, kind: old.kind, tags: old.tags, items: items)
+                }
+                if let expectedPlaylists,
+                   Dictionary(uniqueKeysWithValues: expectedPlaylists.map { ($0.id, $0) }) != Dictionary(uniqueKeysWithValues: snapshots.map { ($0.id, $0) }) {
+                    throw UserFacingError.persistenceFailed("確認後にプレイリストが変更されました。元のJSONを選び直して、差分を再確認してください。")
+                }
+                if let original {
+                    try PlaylistImportArchive.preserve(original, prefix: "received", directory: playlistArchiveDirectory)
+                }
+                try PlaylistImportArchive.preserve(try JSONEncoder().encode(snapshots), prefix: "before", directory: playlistArchiveDirectory)
                 var added = 0, updated = 0, unchanged = 0, importedTracks = 0
-                var unresolved: [UUID] = [], conflicts: [UUID] = []
+                let unresolved: [UUID] = [], conflicts: [UUID] = []
                 var processedPlaylistIDs = Set<UUID>()
                 for value in imported {
                     guard processedPlaylistIDs.insert(value.playlistID).inserted else {
@@ -939,10 +1013,10 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
                     var trackIDs: [Track.ID] = []
                     for track in value.tracks {
                         guard let matches = links[track.trackID], !matches.isEmpty else {
-                            unresolved.append(track.trackID); continue
+                            throw UserFacingError.persistenceFailed("照合できない曲があるため、プレイリストは変更しませんでした。Library JSONの照合後に元のJSONを再読み込みしてください。")
                         }
                         guard matches.count == 1, let homeID = matches.first?.1 else {
-                            conflicts.append(track.trackID); continue
+                            throw UserFacingError.persistenceFailed("曲IDの対応が競合しているため、プレイリストは変更しませんでした。")
                         }
                         trackIDs.append(homeID); importedTracks += 1
                     }

@@ -98,7 +98,9 @@ public protocol LibraryPersisting: Sendable {
     func saveQueue(_ snapshot: QueueSnapshot) async throws
     func saveQueuePosition(_ position: TimeInterval) async throws
     func loadPlaylists() async throws -> [Playlist]
+    func appendUniqueTracks(_ trackIDs: [Track.ID], to playlistIDs: [UUID]) async throws -> Int
     func savePlaylist(_ playlist: Playlist) async throws
+    func mergePlaylists(first: Playlist, second: Playlist, name: String, deduplicate: Bool, removeSources: Bool) async throws -> Playlist
     func deletePlaylist(id: UUID) async throws
     func loadFavorites() async throws -> [Favorite]
     func saveFavorite(_ favorite: Favorite) async throws
@@ -114,4 +116,16 @@ public protocol BookmarkStoring: Sendable {
     func save(_ data: Data) throws
     func load() throws -> Data?
     func remove() throws
+}
+
+public extension LibraryPersisting {
+    func mergePlaylists(first: Playlist, second: Playlist, name: String, deduplicate: Bool, removeSources: Bool) async throws -> Playlist {
+        throw UserFacingError.persistenceFailed("この保存先ではプレイリスト統合に対応していません。")
+    }
+}
+
+public extension LibraryPersisting {
+    func appendUniqueTracks(_ trackIDs: [Track.ID], to playlistIDs: [UUID]) async throws -> Int {
+        throw UserFacingError.persistenceFailed("この保存先では一括追加に対応していません。")
+    }
 }

@@ -279,7 +279,9 @@ public enum MyMusicJSONCodec {
             guard !playlist.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw invalid("プレイリスト名が空")
             }
-            guard !playlist.kind.isEmpty else { throw invalid("kindが空") }
+            guard PlaylistKind(rawValue: playlist.kind) != nil else { throw invalid("kindが不正") }
+            guard try PlaylistTagRules.validatedTags(playlist.tags) == playlist.tags else { throw invalid("tagsが不正") }
+            guard Set(playlist.tracks.map(\.trackID)).count == playlist.tracks.count else { throw invalid("trackIDが重複") }
             for track in playlist.tracks {
                 guard track.duration.map({ $0.isFinite && $0 >= 0 }) ?? true else {
                     throw invalid("durationは0以上の有限値が必要")

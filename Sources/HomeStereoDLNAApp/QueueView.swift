@@ -12,6 +12,7 @@ struct QueueView: View {
     @Bindable var library: LibraryStore
     @State private var clearConfirmation = false
     @State private var showsPlayedItems = false
+    @State private var isAppendTargeted = false
     @State private var dropTargetID: QueueItem.ID?
     var body: some View {
         Group {
@@ -19,15 +20,26 @@ struct QueueView: View {
                 ContentUnavailableView {
                     Label("再生キューは空です", systemImage: "text.line.first.and.arrowtriangle.forward")
                 } description: {
-                    Text("曲、アルバム、アーティスト、プレイリストから再生する曲を追加してください。")
+                    Text("曲をここへドラッグするか、曲、アルバム、プレイリストから追加してください。")
                 } actions: {
                     Button("曲を選ぶ") { playback.destination = .songs }
                 }
+                .background(isAppendTargeted ? Color.accentColor.opacity(0.12) : Color.clear)
+                .dropDestination(for: String.self) { values, _ in handleAppendDrop(values) }
+                    isTargeted: { isAppendTargeted = $0 }
             } else {
                 VStack(spacing: 0) {
                     queueSummary
                     Divider()
-                    queueList
+                    GeometryReader { geometry in
+                        VStack(spacing: 0) {
+                            queueList
+                                .frame(height: min(CGFloat(visibleQueueEntries.count) * 70 + 16,
+                                    max(0, geometry.size.height - 90)))
+                            queueAppendArea
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
                 }
             }
         }
@@ -137,13 +149,41 @@ struct QueueView: View {
             .onDelete { offsets in removeVisibleItems(at: offsets) }
         }
         .onDeleteCommand { Task { await queue.removeSelected() } }
-        .dropDestination(for: String.self) { values, _ in
-            let ids = values.flatMap(TrackDragPayload.decode)
-            guard !ids.isEmpty else { return false }
-            Task { await queue.append(trackIDs: ids) }
+        .accessibilityLabel("再生キュー")
+    }
+
+    private var queueAppendArea: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "text.badge.plus").font(.title2)
+            Text(isAppendTargeted ? "ここにドロップしてキューの最後に追加" : "曲をここへドラッグして最後に追加")
+                .font(.callout).multilineTextAlignment(.center)
+        }
+        .foregroundStyle(isAppendTargeted ? Color.accentColor : Color.secondary)
+        .padding(18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(isAppendTargeted ? Color.accentColor.opacity(0.12) : Color.clear)
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(isAppendTargeted ? Color.accentColor : Color.secondary.opacity(0.25),
+                    style: StrokeStyle(lineWidth: isAppendTargeted ? 2 : 1, dash: [6, 4]))
+                .padding(10)
+        }
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { values, _ in handleAppendDrop(values) }
+            isTargeted: { isAppendTargeted = $0 }
+        .accessibilityLabel("再生キューの最後へのドラッグ追加領域")
+    }
+
+    private func handleAppendDrop(_ values: [String]) -> Bool {
+        if let movingID = values.compactMap(QueueItemDragPayload.decode).first {
+            guard !queue.items.enumerated().contains(where: { $0.offset == queue.currentIndex && $0.element.id == movingID }) else { return false }
+            Task { await queue.move(itemID: movingID, toOffset: queue.items.count) }
             return true
         }
-        .accessibilityLabel("再生キュー")
+        let ids = values.flatMap(TrackDragPayload.decode).filter { library.track(id: $0)?.scanState == .available }
+        guard !ids.isEmpty else { return false }
+        Task { await queue.append(trackIDs: ids) }
+        return true
     }
 
     private func queueRow(_ item: QueueItem, index: Int) -> some View {

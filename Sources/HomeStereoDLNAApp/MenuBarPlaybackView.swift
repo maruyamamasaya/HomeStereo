@@ -146,18 +146,28 @@ struct NowPlayingPreferenceControls: View {
 
     var body: some View {
         if let track = queue.nowPlayingTrack {
-            let value = preferences.preference(for: track.id)
-            HStack(spacing: 10) {
-                ratingButton(track: track, value: value, delta: 1)
-                ratingButton(track: track, value: value, delta: -1)
-            }
-            .overlay(alignment: .topTrailing) {
-                if preferences.errorMessage != nil {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(.red)
-                        .help("評価を保存できませんでした: \(preferences.errorMessage ?? "")")
-                        .offset(x: 8, y: -8)
-                }
+            TrackPreferenceControls(track: track, preferences: preferences, buttonSize: buttonSize)
+        }
+    }
+}
+
+struct TrackPreferenceControls: View {
+    let track: Track
+    @Bindable var preferences: PlaybackPreferenceStore
+    var buttonSize: CGFloat = 28
+
+    var body: some View {
+        let value = preferences.preference(for: track.id)
+        HStack(spacing: 10) {
+            ratingButton(track: track, value: value, delta: 1)
+            ratingButton(track: track, value: value, delta: -1)
+        }
+        .overlay(alignment: .topTrailing) {
+            if preferences.errorMessage != nil {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.red)
+                    .help("評価を保存できませんでした: \(preferences.errorMessage ?? "")")
+                    .offset(x: 8, y: -8)
             }
         }
     }

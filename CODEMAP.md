@@ -42,8 +42,8 @@ Tests: `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
 ## Playlists and M3U8
 
-Primary: `Sources/HomeStereoAppCore/PlaylistModels.swift`, `Sources/HomeStereoDLNAAppCore/PlaylistStore.swift`, `Sources/HomeStereoDLNAApp/PlaylistsView.swift`
-Keywords: `Playlist`, `PlaylistKind`, `workPlaylists`, `workPlaybackGenre`, `savePlaylist`, `parseM3U8`, `M3U8ImportResult`
+Primary: `Sources/HomeStereoAppCore/PlaylistModels.swift`, `Sources/HomeStereoDLNAAppCore/PlaylistStore.swift`, `Sources/HomeStereoDLNAApp/PlaylistsView.swift`, `Sources/HomeStereoDLNAApp/PlaylistDestinationPicker.swift`
+Keywords: `Playlist`, `PlaylistKind`, `workPlaylists`, `workPlaybackGenre`, `savePlaylist`, `addUnique`, `appendUniqueTracks`, `PlaylistDestinationPicker`, `parseM3U8`, `M3U8ImportResult`
 Tests: `Tests/HomeStereoAppCoreTests/PlaylistPersistenceTests.swift`, `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
 ## Favorites and Playback History
@@ -54,7 +54,7 @@ Tests: `Tests/HomeStereoAppCoreTests/ListeningPersistenceTests.swift`
 
 ## Local Playback Analytics
 
-Primary: `Sources/HomeStereoAppCore/AnalyticsModels.swift`, `AnalyticsService.swift`, `MyMusicPlaybackSession.swift`, `LibraryRepository.swift`, `Sources/HomeStereoDLNAAppCore/AnalyticsStore.swift`, `ListeningStore.swift`, `Sources/HomeStereoDLNAApp/AnalyticsView.swift`, `docs/playback-analytics.md`
+Primary: `Sources/HomeStereoAppCore/AnalyticsModels.swift`, `AnalyticsService.swift`, `MyMusicPlaybackSession.swift`, `LibraryRepository.swift`, `Sources/HomeStereoDLNAAppCore/AnalyticsStore.swift`, `ListeningStore.swift`, `Sources/HomeStereoDLNAApp/AnalyticsView.swift`, `Sources/HomeStereoDLNAApp/AnalyticsRankingsView.swift`, `docs/playback-analytics.md`
 Keywords: `AnalyticsSnapshot`, `AnalyticsPersisting`, `TrackPreference`, `PlaybackAnalyticsEndKind`, `playback_track_summaries`, `playback_daily_summaries`, `playback_source_summaries`
 Tests: `Tests/HomeStereoAppCoreTests/AnalyticsServiceTests.swift`, `MyMusicPlaybackSessionTests.swift`, `MyMusicPersistenceTests.swift`, `Tests/HomeStereoDLNAAppCoreTests/RendererPlaybackStoreTests.swift`
 
@@ -124,3 +124,5 @@ Keywords: `HomeStereoDLNAApp`, `network.client`, `network.server`, `NSLocalNetwo
 Primary: `TrackFeatures.swift`, `FeatureAnalysis.swift`, `TrackFeatureStore.swift`, `FeatureAnalysisService.swift`, `TrackFeatureView.swift`, `analyzer/worker.py`, `analyzer/inference.py`
 Keywords: `FeatureAnalysisPlanner`, `FeatureAnalysisMode`, `FeatureRepository`, `NormalizationPlaybackPolicy`, `configureNormalization`, `setAmplitude`, `HomeStereoAnalyzer`, `analysisProfile`, `loudnessSource`
 Tests: `FeatureAnalysisTests.swift`, `FeatureAnalysisServiceTests.swift`, `TrackFeatureTests.swift`, `analyzer/tests/test_worker.py`
+
+ランキング専用ページ: `AnalyticsRankingsView` → `AnalyticsRankingDetailView`、集計: `AnalyticsService.rankingPage`、`AnalyticsRankingKind`／`AnalyticsRankingPage`／`AnalyticsRankingRow`。代表画像は`CachedArtwork`を再利用。

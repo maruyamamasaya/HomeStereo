@@ -467,7 +467,7 @@ final class MyMusicPersistenceTests: XCTestCase {
         XCTAssertTrue(favorites.isEmpty)
     }
 
-    func testPlaylistImportIsIdempotentPartialAndExportNeverUsesLocalTrackID() async throws {
+    func testPlaylistImportRejectsPartialDocumentsAndRepeatedExportKeepsIdentityAndTags() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         let linked = fixture.track(relativePath: "linked.flac", title: "Linked", artist: "A", album: "Album")
@@ -476,38 +476,90 @@ final class MyMusicPersistenceTests: XCTestCase {
         try await fixture.insert([linked, localOnly], into: repository)
         let canonicalID = UUID(), unresolvedID = UUID(), playlistID = UUID()
         try await repository.saveMyMusicTrackLinks([fixture.link(home: linked, externalID: canonicalID)])
-        let record = MyMusicPlaylistRecord(
+        let incomplete = MyMusicPlaylistRecord(
             playlistID: playlistID, name: "MyMusic", createdAt: Date(timeIntervalSince1970: 10),
-            updatedAt: Date(timeIntervalSince1970: 20), kind: "work", tags: ["tag"], tracks: [
-                MyMusicPlaylistTrackRecord(trackID: canonicalID),
-                MyMusicPlaylistTrackRecord(trackID: unresolvedID)
-            ]
-        )
-        let data = try MyMusicJSONExportService().exportPlaylists([record])
+            updatedAt: Date(timeIntervalSince1970: 20), kind: "work", tags: ["夜", "集中"], tracks: [
+                MyMusicPlaylistTrackRecord(trackID: canonicalID), MyMusicPlaylistTrackRecord(trackID: unresolvedID)
+            ])
+        let incompleteData = try MyMusicJSONExportService().exportPlaylists([incomplete])
         let service = MyMusicPersistenceService(repository: repository)
-        let first = try await service.importPlaylists(data)
-        let second = try await service.importPlaylists(data)
-        XCTAssertEqual(first.addedPlaylists, 1)
-        XCTAssertEqual(first.importedTracks, 1)
-        XCTAssertEqual(first.unresolvedTrackIDs, [unresolvedID])
-        XCTAssertEqual(second.unchangedPlaylists, 1)
-        let imported = try await repository.loadPlaylists()
-        XCTAssertEqual(imported.count, 1)
-        XCTAssertEqual(imported.first?.myMusicPlaylistID, playlistID)
-        XCTAssertEqual(imported.first?.playlistKind, .work)
-        XCTAssertEqual(imported.first?.items.map(\.trackID), [linked.id])
+        do {
+            _ = try await service.importPlaylists(incompleteData)
+            XCTFail("Partial playlist must fail")
+        } catch {}
+        let empty = try await repository.loadPlaylists()
+        XCTAssertTrue(empty.isEmpty)
+        let complete = MyMusicPlaylistRecord(playlistID: playlistID, name: incomplete.name,
+            createdAt: incomplete.createdAt, updatedAt: incomplete.updatedAt, kind: incomplete.kind,
+            tags: incomplete.tags, tracks: [MyMusicPlaylistTrackRecord(trackID: canonicalID)])
+        var data = try MyMusicJSONExportService().exportPlaylists([complete])
+        for index in 0..<4 {
+            let result = try await service.importPlaylists(data)
+            XCTAssertEqual(result.addedPlaylists, index == 0 ? 1 : 0)
+            XCTAssertEqual(result.unchangedPlaylists, index == 0 ? 0 : 1)
+            let imported = try await repository.loadPlaylists()
+            XCTAssertEqual(imported.count, 1)
+            XCTAssertEqual(imported.first?.myMusicPlaylistID, playlistID)
+            XCTAssertEqual(imported.first?.tags, ["夜", "集中"])
+            XCTAssertEqual(imported.first?.items.map(\.trackID), [linked.id])
+            data = try await service.exportPlaylists().data
+            let output = try MyMusicJSONCodec.decodePlaylists(data)
+            XCTAssertEqual(output.playlists.first?.playlistID, playlistID)
+            XCTAssertEqual(output.playlists.first?.tracks.map(\.trackID), [canonicalID])
+            XCTAssertEqual(output.playlists.first?.tags, ["夜", "集中"])
+        }
+        do {
+            _ = try await service.importPlaylists(incompleteData)
+            XCTFail("Partial overwrite must fail")
+        } catch {}
+        let preserved = try await repository.loadPlaylists()
+        XCTAssertEqual(preserved.first?.items.map(\.trackID), [linked.id])
+        try await repository.savePlaylist(Playlist(name: "Local export", items: [PlaylistItem(trackID: localOnly.id)]))
+        do {
+            _ = try await service.exportPlaylists()
+            XCTFail("Partial export must fail")
+        } catch {}
+        let archive = fixture.database.deletingLastPathComponent().appendingPathComponent("PlaylistImportArchive")
+        let files = try FileManager.default.contentsOfDirectory(at: archive, includingPropertiesForKeys: nil)
+        XCTAssertTrue(try files.contains { try Data(contentsOf: $0) == incompleteData })
+        XCTAssertTrue(try files.contains { (try? JSONDecoder().decode([Playlist].self, from: Data(contentsOf: $0)))?.first?.myMusicPlaylistID == playlistID })
+    }
 
-        try await repository.savePlaylist(Playlist(
-            name: "Local export", items: [PlaylistItem(trackID: linked.id), PlaylistItem(trackID: localOnly.id)]
-        ))
-        let exported = try await service.exportPlaylists()
-        XCTAssertEqual(exported.totalTracks, 3)
-        XCTAssertEqual(exported.exportedTracks, 2)
-        XCTAssertEqual(exported.missingMyMusicID, 1)
-        let output = try MyMusicJSONCodec.decodePlaylists(exported.data)
-        XCTAssertEqual(output.playlists.first(where: { $0.playlistID == playlistID })?.kind, "work")
-        XCTAssertTrue(output.playlists.flatMap(\.tracks).allSatisfy { $0.trackID == canonicalID })
-        XCTAssertFalse(output.playlists.flatMap(\.tracks).contains { $0.trackID == linked.id || $0.trackID == localOnly.id })
+    func testPlaylistArchiveFailureAndStaleConfirmationAbortBeforeReplacement() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let playlistID = UUID()
+        let first = MyMusicPlaylistRecord(playlistID: playlistID, name: "Existing",
+            createdAt: Date(timeIntervalSince1970: 10), updatedAt: Date(timeIntervalSince1970: 20), tags: ["夜"], tracks: [])
+        let service = MyMusicPersistenceService(repository: repository)
+        _ = try await service.importPlaylists(MyMusicJSONExportService().exportPlaylists([first]))
+        let snapshot = try await repository.loadPlaylists()
+        var local = try XCTUnwrap(snapshot.first)
+        local.tags = ["Local edit"]
+        local.updatedAt = .now
+        try await repository.savePlaylist(local)
+        let savedLocal = try await repository.loadPlaylists()
+        let received = MyMusicPlaylistRecord(playlistID: playlistID, name: "Received",
+            createdAt: first.createdAt, updatedAt: first.updatedAt, tags: ["集中"], tracks: [])
+        let data = try MyMusicJSONExportService().exportPlaylists([received])
+        do {
+            _ = try await service.importPlaylists(data, expectedPlaylists: snapshot)
+            XCTFail("Stale preview must fail")
+        } catch {}
+        let preserved = try await repository.loadPlaylists()
+        XCTAssertEqual(preserved, savedLocal)
+        // A damaged content-addressed original must never be overwritten or accepted.
+        let archive = fixture.database.deletingLastPathComponent().appendingPathComponent("PlaylistImportArchive")
+        let files = try FileManager.default.contentsOfDirectory(at: archive, includingPropertiesForKeys: nil)
+        let original = try XCTUnwrap(files.first { $0.lastPathComponent.hasPrefix("received-") })
+        try Data("damaged".utf8).write(to: original)
+        do {
+            _ = try await service.importPlaylists(MyMusicJSONExportService().exportPlaylists([first]))
+            XCTFail("Damaged archive must fail")
+        } catch {}
+        let afterFailure = try await repository.loadPlaylists()
+        XCTAssertEqual(afterFailure, savedLocal)
     }
 
     func testSnapshotRemovalMarksLinkInactiveAndKeepsHistoryAndPlaylistReferences() async throws {
@@ -550,7 +602,7 @@ final class MyMusicPersistenceTests: XCTestCase {
             )
         }
         do {
-            _ = try await repository.mergeMyMusicPlaylists(values)
+            _ = try await repository.mergeMyMusicPlaylists(values, original: nil)
             XCTFail("duplicate playlistID must fail")
         } catch {}
         let playlists = try await repository.loadPlaylists()
@@ -748,6 +800,45 @@ final class MyMusicPersistenceTests: XCTestCase {
             )
         ])
     }
+    func testDuplicatePlaylistExportRequiresConsentAndLeavesLocalItemsUnchanged() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let first = fixture.track(relativePath: "first.flac", title: "First", artist: "A", album: "Album")
+        let second = fixture.track(relativePath: "second.flac", title: "Second", artist: "A", album: "Album")
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        try await fixture.insert([first, second], into: repository)
+        let firstID = UUID(), secondID = UUID()
+        try await repository.saveMyMusicTrackLinks([
+            fixture.link(home: first, externalID: firstID), fixture.link(home: second, externalID: secondID)
+        ])
+        let playlist = Playlist(myMusicPlaylistID: UUID(), name: "Repeated", tags: ["夜"], items: [
+            PlaylistItem(trackID: first.id), PlaylistItem(trackID: second.id), PlaylistItem(trackID: first.id)
+        ])
+        try await repository.savePlaylist(playlist)
+        let before = try await repository.loadPlaylists()
+        let service = MyMusicPersistenceService(repository: repository)
+        do {
+            _ = try await service.exportPlaylists()
+            XCTFail("Duplicate reduction requires consent")
+        } catch let error as MyMusicPlaylistDuplicateExportError { XCTAssertEqual(error.count, 1) }
+        let result = try await service.exportPlaylists(deduplicate: true)
+        XCTAssertEqual(result.totalTracks, 3)
+        XCTAssertEqual(result.exportedTracks, 2)
+        let decoded = try MyMusicJSONCodec.decodePlaylists(result.data)
+        XCTAssertEqual(decoded.playlists.first?.tracks.map(\.trackID), [firstID, secondID])
+        XCTAssertEqual(decoded.playlists.first?.playlistID, playlist.myMusicPlaylistID)
+        XCTAssertEqual(decoded.playlists.first?.tags, playlist.tags)
+        let after = try await repository.loadPlaylists()
+        XCTAssertEqual(after, before)
+        let repeated = try await service.exportPlaylists(deduplicate: true)
+        XCTAssertEqual(repeated.data, result.data)
+        XCTAssertThrowsError(try MyMusicJSONExportService().exportPlaylists(
+            playlists: [playlist], tracks: [first, second], links: [
+                fixture.link(home: first, externalID: firstID), fixture.link(home: second, externalID: firstID)
+            ], deduplicate: true
+        )) { error in XCTAssertFalse(error is MyMusicPlaylistDuplicateExportError) }
+    }
+
 }
 
 private final class Fixture {

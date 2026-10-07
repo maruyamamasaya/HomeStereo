@@ -179,3 +179,80 @@ public struct AnalyticsSnapshot: Equatable, Sendable {
         )
     }
 }
+
+public struct AnalyticsGroupRanking: Identifiable, Equatable, Sendable {
+    public let name: String
+    public var playCount: Int
+    public var playbackDuration: TimeInterval
+    public var trackCount: Int
+    public var id: String { name }
+}
+
+public struct AnalyticsRankings: Equatable, Sendable {
+    public let artistsByCount: [AnalyticsGroupRanking]
+    public let artistsByDuration: [AnalyticsGroupRanking]
+    public let genresByCount: [AnalyticsGroupRanking]
+    public static let empty = AnalyticsRankings(artistsByCount: [], artistsByDuration: [], genresByCount: [])
+}
+
+public enum AnalyticsPeriod: String, CaseIterable, Sendable {
+    case all, thisMonth, lastMonth, last30Days, custom
+    public var title: String {
+        switch self {
+        case .all: "全期間"
+        case .thisMonth: "今月"
+        case .lastMonth: "先月"
+        case .last30Days: "直近30日"
+        case .custom: "任意期間"
+        }
+    }
+    public func interval(now: Date, start: Date, end: Date, calendar: Calendar = .current) -> DateInterval? {
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+        switch self {
+        case .all: return nil
+        case .thisMonth: return calendar.dateInterval(of: .month, for: now)
+        case .lastMonth: return calendar.dateInterval(of: .month, for: calendar.date(byAdding: .month, value: -1, to: now)!)
+        case .last30Days: return DateInterval(start: calendar.date(byAdding: .day, value: -29, to: today)!, end: tomorrow)
+        case .custom:
+            let first = calendar.startOfDay(for: start)
+            let last = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: end))!
+            return DateInterval(start: first, end: max(first, last))
+        }
+    }
+}
+
+public enum AnalyticsRankingKind: String, CaseIterable, Sendable {
+    case track, artist, album, genre
+    public var title: String {
+        switch self {
+        case .track: "曲"
+        case .artist: "アーティスト"
+        case .album: "アルバム"
+        case .genre: "ジャンル"
+        }
+    }
+    public var symbol: String {
+        switch self {
+        case .track: "music.note"
+        case .artist: "person.2"
+        case .album: "square.stack"
+        case .genre: "music.note.list"
+        }
+    }
+}
+
+public struct AnalyticsRankingRow: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let trackIDs: [Track.ID]
+    public let artworkTrackID: Track.ID?
+    public let playCount: Int
+    public let seconds: TimeInterval
+}
+
+public struct AnalyticsRankingPage: Equatable, Sendable {
+    public let byCount: [AnalyticsRankingRow]
+    public let byTime: [AnalyticsRankingRow]
+    public static let empty = AnalyticsRankingPage(byCount: [], byTime: [])
+}

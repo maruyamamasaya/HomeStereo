@@ -5,13 +5,13 @@ public enum PlaylistKind: String, CaseIterable, Sendable {
     case work
 }
 
-public struct PlaylistItem: Identifiable, Hashable, Sendable {
+public struct PlaylistItem: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public let trackID: Track.ID
     public init(id: UUID = UUID(), trackID: Track.ID) { self.id = id; self.trackID = trackID }
 }
 
-public struct Playlist: Identifiable, Hashable, Sendable {
+public struct Playlist: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public var myMusicPlaylistID: UUID?
     public var name: String
@@ -40,5 +40,20 @@ public struct M3U8ImportResult: Equatable, Sendable {
     public let ambiguous: [String]
     public init(imported: Int, unresolved: [String], ambiguous: [String]) {
         self.imported = imported; self.unresolved = unresolved; self.ambiguous = ambiguous
+    }
+}
+
+public enum PlaylistMerge {
+    public static func make(first: Playlist, second: Playlist, name: String, deduplicate: Bool = true) throws -> Playlist {
+        guard first.id != second.id, first.kind == second.kind else {
+            throw UserFacingError.persistenceFailed("同じ種類の異なる2つのプレイリストを選んでください。")
+        }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw UserFacingError.persistenceFailed("新しいプレイリスト名を入力してください。") }
+        var seen = Set<Track.ID>()
+        let items = (first.items + second.items).filter { !deduplicate || seen.insert($0.trackID).inserted }
+            .map { PlaylistItem(trackID: $0.trackID) }
+        return Playlist(name: name, kind: first.kind,
+            tags: try PlaylistTagRules.validatedTags(first.tags + second.tags), items: items)
     }
 }

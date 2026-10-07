@@ -11,6 +11,10 @@ public final class AnalyticsStore {
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var revision = 0
+    public private(set) var fullSnapshot = AnalyticsSnapshot.empty()
+    public var period = AnalyticsPeriod.all
+    public var startDate = Date.now
+    public var endDate = Date.now
 
     @ObservationIgnored private let repository: any AnalyticsPersisting
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
@@ -55,15 +59,18 @@ public final class AnalyticsStore {
         isLoading = true
         errorMessage = nil
         let repository = self.repository
+        let interval = period.interval(now: .now, start: startDate, end: endDate)
         let task = Task { @MainActor [weak self] in
             do {
                 let value = try await Task.detached(priority: .userInitiated) {
                     let context = try await repository.loadAnalyticsContext()
                     try Task.checkCancellation()
-                    return AnalyticsService.makeSnapshot(context: context)
+                    return (AnalyticsService.makeSnapshot(context: context, interval: interval),
+                            AnalyticsService.makeSnapshot(context: context))
                 }.value
                 guard let self, !Task.isCancelled, requestedGeneration == self.generation else { return }
-                self.snapshot = value
+                self.snapshot = value.0
+                self.fullSnapshot = value.1
                 self.revision &+= 1
                 self.isLoading = false
                 self.needsRefresh = false

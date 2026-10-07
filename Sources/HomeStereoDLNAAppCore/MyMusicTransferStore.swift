@@ -156,6 +156,7 @@ public final class MyMusicStatusStore {
 @MainActor
 @Observable
 public final class MyMusicTransferStore {
+    public var duplicatePlaylistExportCount: Int?
     public private(set) var state: MyMusicTransferState = .idle
     public private(set) var preview: MyMusicImportPreview?
     public private(set) var preferencesExportPreview: MyMusicPreparedPreferencesExport?
@@ -213,7 +214,7 @@ public final class MyMusicTransferStore {
         let appliedPreview = preview
         state = .applying; errorMessage = nil
         do {
-            try await transfer.apply(pendingData, as: pendingKind)
+            try await transfer.apply(pendingData, as: pendingKind, expectedPlaylists: appliedPreview?.playlistSnapshot)
             await afterImportApplied(pendingKind)
             self.pendingData = nil; self.pendingKind = nil; preview = nil
             completedMessage = "\(pendingKind.fileName)を読み込みました。\(Self.resultSummary(appliedPreview))"
@@ -270,14 +271,15 @@ public final class MyMusicTransferStore {
     }
 
     public func export(
-        _ kind: MyMusicDocumentKind, playbackEventsRange: Range<Date>? = nil
+        _ kind: MyMusicDocumentKind, playbackEventsRange: Range<Date>? = nil, deduplicatePlaylists: Bool = false
     ) async {
         guard !isBusy else { return }
-        guard let url = files.chooseExportURL(defaultFileName: kind.fileName) else { return }
+        duplicatePlaylistExportCount = nil
         discardPendingImport()
         state = .exporting; clearOutput()
         do {
-            let value = try await transfer.export(kind, playbackEventsRange: playbackEventsRange)
+            let value = try await transfer.export(kind, playbackEventsRange: playbackEventsRange, deduplicatePlaylists: deduplicatePlaylists)
+            guard let url = files.chooseExportURL(defaultFileName: kind.fileName) else { state = .idle; return }
             do { try files.write(value.data, to: url) }
             catch {
                 fail("保存先へ書き込めませんでした。保存先のアクセス権や空き容量を確認してください。\n\(error.localizedDescription)")
@@ -290,7 +292,14 @@ public final class MyMusicTransferStore {
                 playbackEventsRange: kind == .playbackEvents ? playbackEventsRange : nil
             )
             completedMessage = "\(kind.fileName)を書き出しました。"
+            if kind == .playlists, deduplicatePlaylists {
+                let count = (value.total ?? 0) - (value.exported ?? 0)
+                completedMessage = "\(kind.fileName)を書き出しました。JSON内の重複\(count)件をまとめました。元のプレイリストは変更していません。"
+            }
             state = .completed
+        } catch let duplicate as MyMusicPlaylistDuplicateExportError {
+            duplicatePlaylistExportCount = duplicate.count
+            state = .idle
         } catch { fail(Self.userMessage(for: error, phase: .exporting)) }
     }
 

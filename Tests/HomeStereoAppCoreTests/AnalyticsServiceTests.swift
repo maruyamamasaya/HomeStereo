@@ -3,6 +3,48 @@ import XCTest
 @testable import HomeStereoAppCore
 
 final class AnalyticsServiceTests: XCTestCase {
+    func testArtistAndGenreRankingsAggregateAndRespectPreset() {
+        func row(_ artist: String, _ genre: String, _ count: Int, _ seconds: Double) -> AnalyticsTrackSummary {
+            AnalyticsTrackSummary(trackID: UUID(), title: "Fixture", artist: artist, album: "", genre: genre,
+                playCount: count, sessionCount: 0, totalPlaybackDuration: seconds, lastPlayedAt: nil,
+                completionRate: nil, skipRate: nil, earlySkipCount: 0, favorite: false,
+                playbackPreference: nil, isAvailable: true)
+        }
+        let tracks = [row("A", "Rock", 3, 100), row("A", "Jazz", 2, 50),
+            row("B", "Jazz", 4, 400), row("", "", 1, 20), row("Never", "Rock", 0, 0)]
+        let all = AnalyticsService.rankings(tracks: tracks)
+        XCTAssertEqual(all.artistsByCount.first?.name, "A")
+        XCTAssertEqual(all.artistsByCount.first?.playCount, 5)
+        XCTAssertEqual(all.artistsByDuration.first?.name, "B")
+        XCTAssertEqual(all.artistsByDuration.first?.playbackDuration, 400)
+        XCTAssertEqual(all.genresByCount.first?.name, "Jazz")
+        XCTAssertEqual(all.genresByCount.first?.playCount, 6)
+        XCTAssertTrue(all.artistsByCount.contains { $0.name == "アーティスト未設定" })
+        XCTAssertFalse(all.artistsByCount.contains { $0.name == "Never" })
+        let preset = GenreDisplayPreset(name: "Rock", enabledGenreNames: ["Rock"])
+        let filtered = AnalyticsService.rankings(tracks: tracks, artistPreset: preset)
+        XCTAssertEqual(filtered.artistsByCount.map(\.name), ["A"])
+        XCTAssertEqual(filtered.artistsByCount.first?.playCount, 3)
+        XCTAssertEqual(filtered.artistsByDuration.first?.playbackDuration, 100)
+        XCTAssertEqual(filtered.genresByCount, all.genresByCount)
+        let unassigned = GenreDisplayPreset(name: "未分類", enabledGenreNames: [GenreDisplayPreset.unassignedGenreID])
+        XCTAssertEqual(AnalyticsService.rankings(tracks: tracks, artistPreset: unassigned).artistsByCount.first?.name, "アーティスト未設定")
+        XCTAssertEqual(AnalyticsService.rankings(tracks: []).artistsByCount, [])
+    }
+
+    func testRankingsKeepCountAndDurationIndependentAndUseStableTies() {
+        func row(_ artist: String, _ count: Int, _ seconds: Double) -> AnalyticsTrackSummary {
+            AnalyticsTrackSummary(trackID: UUID(), title: "Fixture", artist: artist, album: "", genre: "Rock",
+                playCount: count, sessionCount: 0, totalPlaybackDuration: seconds, lastPlayedAt: nil,
+                completionRate: nil, skipRate: nil, earlySkipCount: 0, favorite: false,
+                playbackPreference: nil, isAvailable: false)
+        }
+        let value = AnalyticsService.rankings(tracks: [row("B", 5, 0), row("A", 5, 0), row("C", 0, 30)])
+        XCTAssertEqual(value.artistsByCount.map(\.name), ["A", "B"])
+        XCTAssertEqual(value.artistsByDuration.map(\.name), ["C"])
+        XCTAssertEqual(value.genresByCount.first?.playCount, 10)
+    }
+
     func testSnapshotTotalsRankingPeriodsSourcesAndRatings() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -124,6 +166,81 @@ final class AnalyticsServiceTests: XCTestCase {
         XCTAssertFalse(FeatureIdentityCheck.matches(featureID: id, linkedIDs: [id], canonicalHomeCount: 2))
         XCTAssertFalse(FeatureIdentityCheck.matches(featureID: id, linkedIDs: [UUID()], canonicalHomeCount: 1))
         XCTAssertFalse(FeatureIdentityCheck.matches(featureID: nil, linkedIDs: [], canonicalHomeCount: 0))
+    }
+
+    func testSelectedPeriodUsesEventsAndExcludesEndBoundary() {
+        let song = track(title: "Period")
+        let start = Date(timeIntervalSince1970: 1800000000)
+        let interval = DateInterval(start: start, duration: 86400)
+        let values = [event("before", track: song, at: start.addingTimeInterval(-1), listened: 40),
+                      event("start", track: song, at: start, listened: 50),
+                      event("end", track: song, at: interval.end, listened: 60)]
+        let context = AnalyticsContext(tracks: [song], events: values, favorites: [], preferences: [], playlists: [])
+        let snapshot = AnalyticsService.makeSnapshot(context: context, interval: interval)
+        XCTAssertEqual(snapshot.overview.playCount, 1)
+        XCTAssertEqual(snapshot.overview.totalPlaybackDuration, 50)
+        XCTAssertEqual(snapshot.allTracks.first?.playCount, 1)
+        XCTAssertEqual(AnalyticsService.events(in: AnalyticsService.makeSnapshot(context: context), interval: interval).map(\.id), ["start"])
+    }
+
+    func testMonthAndCustomPeriodsUseCalendarBoundaries() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3600)!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 3, day: 15))!
+        let previous = AnalyticsPeriod.lastMonth.interval(now: now, start: now, end: now, calendar: calendar)!
+        XCTAssertEqual(calendar.component(.month, from: previous.start), 2)
+        XCTAssertEqual(calendar.component(.month, from: previous.end), 3)
+        let custom = AnalyticsPeriod.custom.interval(now: now, start: now, end: now, calendar: calendar)!
+        XCTAssertEqual(custom.duration, 86400)
+        XCTAssertNil(AnalyticsPeriod.all.interval(now: now, start: now, end: now, calendar: calendar))
+    }
+
+    func testNormalRankingExcludesWorkAndHighResolutionByMetadata() {
+        let regular = track(title: "Normal")
+        let work = Track(url: URL(fileURLWithPath: "/tmp/work.flac"), title: "Work", genre: "Rock;作業用BGM")
+        let hi = Track(url: URL(fileURLWithPath: "/tmp/hi.flac"), title: "Hi", sampleRate: 96000, bitDepth: 24)
+        XCTAssertEqual(AnalyticsService.normalTrackIDs([regular, work, hi]), [regular.id])
+    }
+
+    func testRankingPageStableArtworkSeparateMetricsAndRegularOnly() {
+        let first = Track(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            url: URL(fileURLWithPath: "/tmp/one.flac"), title: "One", artist: "Artist", album: "Album", genre: "Rock;Jazz", hasArtwork: true)
+        let second = Track(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            url: URL(fileURLWithPath: "/tmp/two.flac"), title: "Two", artist: "Other", album: "Album", genre: "Rock", hasArtwork: true)
+        let work = Track(url: URL(fileURLWithPath: "/tmp/work.flac"), title: "Work", artist: "Work", genre: "作業用BGM")
+        let hi = Track(url: URL(fileURLWithPath: "/tmp/hi.flac"), title: "Hi", genre: "ハイレゾ")
+        let now = Date.now
+        let snapshot = AnalyticsService.makeSnapshot(context: AnalyticsContext(tracks: [first, second, work, hi],
+            events: [event("one", track: first, at: now, listened: 40),
+                     event("two", track: second, at: now, listened: 90),
+                     event("work", track: work, at: now, listened: 99),
+                     event("hi", track: hi, at: now, listened: 99)], favorites: [], preferences: [], playlists: []))
+        let album = AnalyticsService.rankingPage(summaries: snapshot.allTracks, libraryTracks: [first, second, work, hi], kind: .album)
+        XCTAssertEqual(album.byCount.count, 1)
+        XCTAssertEqual(album.byCount[0].playCount, 2)
+        XCTAssertEqual(album.byCount[0].seconds, 130)
+        XCTAssertEqual(album.byCount[0].artworkTrackID, first.id)
+        let reordered = AnalyticsService.rankingPage(summaries: snapshot.allTracks.reversed(), libraryTracks: [second, first, hi, work], kind: .album)
+        XCTAssertEqual(album, reordered)
+        let later = AnalyticsService.makeSnapshot(context: AnalyticsContext(tracks: [first, second],
+            events: [event("only-second", track: second, at: now, listened: 90)], favorites: [], preferences: [], playlists: []))
+        XCTAssertEqual(AnalyticsService.rankingPage(summaries: later.allTracks, libraryTracks: [first, second], kind: .album).byCount[0].artworkTrackID, first.id)
+        let genres = AnalyticsService.rankingPage(summaries: snapshot.allTracks, libraryTracks: [first, second, work, hi], kind: .genre)
+        XCTAssertEqual(genres.byCount.first?.title, "Rock")
+        XCTAssertEqual(genres.byCount.first?.playCount, 2)
+        XCTAssertEqual(Set(genres.byCount.map(\.title)), ["Rock", "Jazz"])
+    }
+
+    func testRankingPageLimitsBothMetricsToFifty() {
+        let tracks = (0..<60).map { track(title: "Song \($0)") }
+        let now = Date.now
+        let snapshot = AnalyticsService.makeSnapshot(context: AnalyticsContext(tracks: tracks,
+            events: tracks.enumerated().map { event("event-\($0.offset)", track: $0.element, at: now, listened: Double(40 + $0.offset)) },
+            favorites: [], preferences: [], playlists: []))
+        let page = AnalyticsService.rankingPage(summaries: snapshot.allTracks, libraryTracks: tracks, kind: .track)
+        XCTAssertEqual(page.byCount.count, 50)
+        XCTAssertEqual(page.byTime.count, 50)
+        XCTAssertEqual(page.byTime.first?.seconds, 99)
     }
 
     private func track(title: String, artist: String? = nil) -> Track {

@@ -201,7 +201,7 @@ public protocol MyMusicPersisting: Sendable {
     func loadMyMusicLibraryRecords() async throws -> [MyMusicTrackRecord]
     func loadMyMusicPlaybackEventRecords() async throws -> [MyMusicPlaybackEventRecord]
     func loadMyMusicPlaylistContext() async throws -> (playlists: [Playlist], tracks: [Track], links: [MyMusicTrackLink])
-    func mergeMyMusicPlaylists(_ playlists: [MyMusicPlaylistRecord]) async throws -> MyMusicPlaylistPersistenceResult
+    func mergeMyMusicPlaylists(_ playlists: [MyMusicPlaylistRecord], original: Data?, expectedPlaylists: [Playlist]?) async throws -> MyMusicPlaylistPersistenceResult
 }
 
 public struct MyMusicPlaybackEventsExportResult: Equatable, Sendable {

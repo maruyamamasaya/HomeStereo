@@ -869,6 +869,57 @@ import Testing
 }
 
 @MainActor
+@Test func playlistTagEditsUseStoreAndPreserveIdentityTracksAndJSON() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("tags.sqlite3"))
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FakeDescriptions(renderer: sampleRenderer()),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
+    )
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(), repository: repository)
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    let store = PlaylistStore(repository: repository, library: library, queue: queue, files: FakePlaylistFiles())
+    let playlist = Playlist(myMusicPlaylistID: UUID(), name: "Tagged")
+    try await repository.savePlaylist(playlist)
+    await store.load()
+    #expect(await store.setTags([" 夜 ", "集中", "夜"], for: playlist.id))
+    #expect(store.playlists.first?.id == playlist.id)
+    #expect(store.playlists.first?.myMusicPlaylistID == playlist.myMusicPlaylistID)
+    #expect(store.playlists.first?.tags == ["夜", "集中"])
+    #expect(!(await store.setTags([String(repeating: "あ", count: 41)], for: playlist.id)))
+    #expect(store.playlists.first?.tags == ["夜", "集中"])
+    let work = Playlist(name: "Work", kind: "work", tags: ["集中", "Work only"])
+    try await repository.savePlaylist(work)
+    await store.load()
+    #expect(store.playlists(of: .regular, tagged: "夜").map(\.id) == [playlist.id])
+    #expect(store.playlists(of: .work, tagged: "集中").map(\.id) == [work.id])
+    #expect(store.tags(of: .regular) == ["集中", "夜"])
+    #expect(store.tags(of: .work).contains("Work only"))
+    store.selectedPlaylistID = playlist.id
+    store.selectedPlaylistIDs = [playlist.id]
+    store.activate(.work)
+    #expect(store.selectedPlaylistID == nil)
+    #expect(store.selectedPlaylistIDs.isEmpty)
+    let untagged = Playlist(name: "No tags")
+    let literal = Playlist(name: "Literal", tags: ["タグなし"])
+    let workUntagged = Playlist(name: "Work no tags", kind: "work")
+    try await repository.savePlaylist(untagged)
+    try await repository.savePlaylist(literal)
+    try await repository.savePlaylist(workUntagged)
+    await store.load()
+    #expect(store.playlists(of: .regular, tagged: nil, untaggedOnly: true).map(\.id) == [untagged.id])
+    #expect(store.playlists(of: .work, tagged: nil, untaggedOnly: true).map(\.id) == [workUntagged.id])
+    #expect(store.playlists(of: .regular, tagged: "タグなし").map(\.id) == [literal.id])
+    let data = try await MyMusicPersistenceService(repository: repository).exportPlaylists().data
+    let exported = try MyMusicJSONCodec.decodePlaylists(data)
+    #expect(exported.playlists.first { $0.playlistID == playlist.myMusicPlaylistID }?.tags == ["夜", "集中"])
+    #expect(await store.setTags([], for: playlist.id))
+    #expect(store.playlists.first { $0.id == playlist.id }?.tags.isEmpty == true)
+}
+
+@MainActor
 @Test func queuePersistsOrderCurrentPositionShuffleAndRepeat() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

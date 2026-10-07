@@ -46,9 +46,9 @@ HomeStereoの実再生は`QueueStore -> ListeningStore -> MyMusicPlaybackSession
 
 ## Playlist JSON
 
-単一プレイリストrootと`playlists`配列rootの両方を受理する。統合版、通常版、作業用版はファイル名ではなく各Playlistの`kind`で区別する。曲は`trackID == mymusic_track_id`の完全一致だけで解決し、metadataから推測しない。未解決・競合曲は除外して件数を報告し、解決済み曲の順序を保つ。同じ`playlistID`の再Importは既存Playlistを更新して重複を作らず、文書全体を1 transactionで適用する。
+単一プレイリストrootと`playlists`配列rootの両方を受理する。統合版、通常版、作業用版はファイル名ではなく各Playlistの`kind`で区別する。曲は`trackID == mymusic_track_id`の完全一致だけで解決し、metadataから推測しない。未解決・競合曲がある場合は文書全体の適用を停止し、既存Playlistを変更しない。同じ`playlistID`の再Importは既存Playlistを更新して重複を作らず、文書全体を1 transactionで適用する。
 
-Exportは全ローカルPlaylistを複数形式で書き出す。各曲にはMyMusic Track IDだけを使用し、未接続または競合中の曲は除外して、総曲数、出力曲数、未接続数、競合数を表示する。`kind`はImport値またはローカル作成時の`regular`／`work`を維持する。Sidebarでは通常と作業用を別画面に表示し、ローカル追加時も種類を混在させない。作業用曲はdurationではなく、複数genreを`;`またはNULで分割・trimした集合に「作業用BGM」が含まれるかだけで判定する。MyMusicから再Importされた同一`playlistID`を以後の正本として扱う。M3U8は一般互換用途として維持し、Identity同期には使わない。
+Exportは全ローカルPlaylistを複数形式で書き出す。各曲にはMyMusic Track IDだけを使用し、未接続または競合中の曲がある場合はJSON Exportを停止し、不完全なPlaylistを出力しない。`kind`はImport値またはローカル作成時の`regular`／`work`を維持する。Sidebarでは上部の通常／作業用BGMをkindで切り替え、選択したkindのタグで絞り込める。新規作成／M3U8 Importも選択kindに入る。既存の曲の混在は保持する。MyMusic側でkind非互換の曲がある場合はImportを停止する。作業用曲はdurationではなく、複数genreを`;`またはNULで分割・trimした集合に「作業用BGM」が含まれるかだけで判定する。MyMusicから再Importされた同一`playlistID`を以後の正本として扱う。M3U8は一般互換用途として維持し、Identity同期には使わない。
 
 ## Manual Import / Export
 
@@ -72,3 +72,9 @@ Exportできる文書はLibrary、Playlists、Preferences、Playback Eventsの4�
 ## Macの新規イベント保存条件
 
 HomeStereoで新規生成する再生履歴とPlayback Eventsは、位置差分から求める実聴時間（`playDuration`）が30秒を超えた場合だけ保存する。30秒以下は完走・停止を問わず保存せず、途中checkpointも対象外。一時停止とシークで飛ばした区間は加算しない。MyMusicからのImportにはこの条件を適用せず、既存保存済みイベントも削除しない。JSON schemaとMyMusic互換の完走／Skip判定は維持する。
+
+
+タグは詳細画面で追加・削除・既存タグ選択ができ、Sidebarはタグfilterを持つ。MyMusicと同じ20個／40文字の制約・重複正規化を使う。JSON Import確定前には受信原本と更新前の全Playlist（ローカルID・外部ID・項目ID・曲順・tagsを含む）をDB directoryのPlaylistImportArchiveへhash名で保管する。read-back失敗は適用を止める。更新確認後にPlaylistが編集された場合もtransaction内で停止する。原本の復元UI、原本の外部backup包含、未照合参照を保留して部分適用する機能は未実装。
+
+### 重複曲を含むプレイリストの書き出し
+Mac内の既存プレイリストは同じ曲を複数回保持できるが、MyMusic向けJSONは重複Track IDを許容しない。書き出し時に重複件数を確認し、「JSON内の重複をまとめて書き出す」を選ぶと各リストの最初の1回だけを出力する。元のMacリストは変更しない。キャンセル時はJSONを書かない。未接続・ID競合の曲がある場合は、重複集約を承認しても全体を書き出さない。

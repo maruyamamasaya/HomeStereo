@@ -215,15 +215,15 @@ public struct MyMusicPersistenceService: Sendable {
         )
     }
 
-    public func importPlaylists(_ data: Data) async throws -> MyMusicPlaylistPersistenceResult {
+    public func importPlaylists(_ data: Data, expectedPlaylists: [Playlist]? = nil) async throws -> MyMusicPlaylistPersistenceResult {
         let document = try MyMusicJSONImportService().importPlaylists(data)
-        return try await repository.mergeMyMusicPlaylists(document.playlists)
+        return try await repository.mergeMyMusicPlaylists(document.playlists, original: data, expectedPlaylists: expectedPlaylists)
     }
 
-    public func exportPlaylists() async throws -> MyMusicPlaylistExportResult {
+    public func exportPlaylists(deduplicate: Bool = false) async throws -> MyMusicPlaylistExportResult {
         let context = try await repository.loadMyMusicPlaylistContext()
         return try MyMusicJSONExportService().exportPlaylists(
-            playlists: context.playlists, tracks: context.tracks, links: context.links
+            playlists: context.playlists, tracks: context.tracks, links: context.links, deduplicate: deduplicate
         )
     }
 }

@@ -12,6 +12,7 @@ struct AnalyticsView: View {
     @Bindable var library: LibraryStore
     @Bindable var store: AnalyticsStore
     @Bindable var features: TrackFeatureStore
+    @Bindable var genrePresets: GenreDisplayPresetStore
     @Environment(\.homeStereoTheme) private var theme
     @State private var section = 0
     @State private var selectedDate = Date.now
@@ -27,14 +28,24 @@ struct AnalyticsView: View {
         VStack(spacing: 0) {
             Picker("分析", selection: $section) {
                 Text("概要").tag(0)
+                Text("ランキング").tag(5)
                 Text("再生履歴").tag(1)
                 Text("最近の傾向").tag(2)
                 Text("評価").tag(3)
                 Text("完走・スキップ").tag(4)
+                Text("作業用BGM時間").tag(6)
+                Text("ハイレゾ時間").tag(7)
             }
             .pickerStyle(.segmented)
             .padding(14)
             HStack {
+                Picker("期間", selection: $store.period) {
+                    ForEach(AnalyticsPeriod.allCases, id: \.self) { Text($0.title).tag($0) }
+                }.frame(maxWidth: 240)
+                if store.period == .custom {
+                    DatePicker("開始", selection: $store.startDate, displayedComponents: .date)
+                    DatePicker("終了", selection: $store.endDate, in: store.startDate..., displayedComponents: .date)
+                }
                 Spacer()
                 Button("再集計", systemImage: "arrow.clockwise") { Task { await store.refresh() } }.disabled(store.isLoading)
                 Menu("履歴の管理", systemImage: "ellipsis.circle") {
@@ -77,6 +88,9 @@ struct AnalyticsView: View {
         }
         .task { await store.activate(); if features.rows.isEmpty { await features.load() } }
         .onDisappear { store.deactivate() }
+        .onChange(of: store.period) { _, _ in Task { await store.refresh() } }
+        .onChange(of: store.startDate) { _, _ in if store.endDate < store.startDate { store.endDate = store.startDate }; Task { await store.refresh() } }
+        .onChange(of: store.endDate) { _, _ in Task { await store.refresh() } }
         .onChange(of: library.revision) { _, _ in store.invalidate() }
     }
 
@@ -88,11 +102,15 @@ struct AnalyticsView: View {
         else if section == 1 { history }
         else if section == 2 { trends }
         else if section == 3 { ratings }
+        else if section == 5 { AnalyticsRankingsView(snapshot: store.snapshot, presets: genrePresets, initialPresetID: library.selectedGenrePresetID, library: library, queue: queue, playback: playback) }
+        else if section == 6 || section == 7 { categoryTime }
         else { rates }
     }
 
     private var overview: some View {
-        ScrollView {
+        let normalIDs = AnalyticsService.normalTrackIDs(library.tracks)
+        let ranked = Array(store.snapshot.allTracks.filter { normalIDs.contains($0.trackID) && $0.playCount > 0 }.prefix(10))
+        return ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                     metric("総再生回数", "\(store.snapshot.overview.playCount)", "play.circle")
@@ -113,14 +131,14 @@ struct AnalyticsView: View {
                     .foregroundStyle(.secondary)
                 }
                 Text("よく再生している曲").font(.title2.bold())
-                if store.snapshot.topTracks.isEmpty {
+                if ranked.isEmpty {
                     ContentUnavailableView(
                         "正式再生の記録がありません", systemImage: "chart.bar",
                         description: Text("自然終了、または min(30秒, 曲長の50%) 以上聴くと集計されます。")
                     )
                 } else {
                     VStack(spacing: 0) {
-                        ForEach(store.snapshot.topTracks) { trackRow($0, showsRating: false); Divider() }
+                        ForEach(ranked) { trackRow($0, showsRating: false); Divider() }
                     }
                     .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
                 }
@@ -256,9 +274,55 @@ struct AnalyticsView: View {
             .help(today ? "今日 · \(count)件の再生履歴" : "\(count)件の再生履歴")
     }
 
+    private var monthlyRecap: some View {
+        let calendar = Calendar.current
+        let current = calendar.dateInterval(of: .month, for: month)!
+        let previous = calendar.dateInterval(of: .month, for: calendar.date(byAdding: .month, value: -1, to: month)!)!
+        let ids = AnalyticsService.normalTrackIDs(library.tracks)
+        let events = AnalyticsService.events(in: store.fullSnapshot, interval: current, trackIDs: ids)
+        let old = AnalyticsService.events(in: store.fullSnapshot, interval: previous, trackIDs: ids)
+        let seconds = events.reduce(0) { $0 + $1.listenedSeconds }
+        let delta = seconds - old.reduce(0) { $0 + $1.listenedSeconds }
+        let top = Dictionary(grouping: events, by: \.trackID).values.sorted { a, b in
+            a.count == b.count ? (a.first?.title ?? "") < (b.first?.title ?? "") : a.count > b.count
+        }.first?.first?.title
+        let artist = Dictionary(grouping: events, by: \.artist).sorted {
+            $0.value.count == $1.value.count ? $0.key < $1.key : $0.value.count > $1.value.count
+        }.first?.key
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("この月の振り返り・通常曲").font(.headline)
+            Text("\(events.count)件 · \(duration(seconds))")
+            Text("前月との差 \(delta >= 0 ? "+" : "−")\(duration(abs(delta)))")
+            Text("代表曲：\(top ?? "履歴なし")")
+            Text("代表アーティスト：\(artist ?? "履歴なし")")
+            Text("保存済み詳細履歴による集計。期間選択とは独立して表示中の月を振り返ります。前月に履歴がない場合も記録上の0との差です。")
+                .font(.caption).foregroundStyle(.secondary)
+        }.padding(16).homeStereoThemeSurface(cornerRadius: 14)
+    }
+
+    private var categoryTime: some View {
+        let ids = Set(library.tracks.filter { section == 6 ? $0.isEligibleForWorkPlayback : $0.isHighResolutionAudio }.map(\.id))
+        let days = store.snapshot.historyDays.map { day in
+            (day.date, day.events.filter { ids.contains($0.trackID) }.reduce(0) { $0 + $1.listenedSeconds })
+        }.filter { $0.1 > 0 }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(section == 6 ? "作業用BGMの再生時間" : "ハイレゾの再生時間").font(.title2.bold())
+                Text("\(store.period.title) · \(duration(days.reduce(0) { $0 + $1.1 }))").font(.title)
+                Text("詳細履歴の実聴時間。現在のライブラリ分類を使います。両方に属する曲は両ページに含まれます。")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(days, id: \.0) { day in
+                    HStack { Text(day.0, style: .date); Spacer(); Text(duration(day.1)) }
+                }
+                if days.isEmpty { Text("この期間の再生時間の記録はありません") }
+            }.padding(20)
+        }
+    }
+
     private var historyDetail: some View {
         let events = historyEvents
         return VStack(alignment: .leading, spacing: 14) {
+            monthlyRecap
             VStack(alignment: .leading, spacing: 7) {
                 Text(weekly ? "\(selectedInterval?.start.formatted(date: .abbreviated, time: .omitted) ?? "")からの1週間" : selectedDate.formatted(date: .complete, time: .omitted)).font(.title3.bold())
                 HStack(spacing: 18) {

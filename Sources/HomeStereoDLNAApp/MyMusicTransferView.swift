@@ -55,6 +55,17 @@ struct MyMusicTransferView: View {
             }
             .padding(24).frame(maxWidth: 920).frame(maxWidth: .infinity)
         }
+        .confirmationDialog("重複する曲をまとめて書き出しますか？", isPresented: Binding(
+            get: { store.duplicatePlaylistExportCount != nil },
+            set: { if !$0 { store.duplicatePlaylistExportCount = nil } }
+        )) {
+            Button("JSON内の重複をまとめて書き出す") {
+                Task { await store.export(.playlists, deduplicatePlaylists: true) }
+            }
+            Button("キャンセル", role: .cancel) { store.duplicatePlaylistExportCount = nil }
+        } message: {
+            Text("同じ曲の重複が\(store.duplicatePlaylistExportCount ?? 0)件あります。各プレイリストで最初の1回だけをJSONに出力します。元のプレイリストの曲順や重複は変更しません。")
+        }
         .navigationTitle("MyMusic連携")
         .task { if features.rows.isEmpty { await features.load() } }
     }
@@ -180,6 +191,14 @@ struct MyMusicTransferView: View {
                 Label("読み込み前の確認 — \(preview.kind.fileName)", systemImage: "doc.text.magnifyingglass")
                     .font(.title3.bold())
                 summary(preview)
+                if preview.kind == .playlists {
+                    Text("同じIDのプレイリストは名前・タグ・曲順を受信内容へ更新します。更新前のデータと受信原本をアプリ内に保管します。")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if preview.unresolved > 0 || preview.conflicts > 0 {
+                        Text("未照合またはID競合の曲があります。Library JSONの照合後に元のJSONを再読み込みしてください。")
+                            .foregroundStyle(.orange)
+                    }
+                }
                 if !preview.details.isEmpty {
                     Divider()
                     Text("明細（先頭\(preview.details.count)件）").font(.headline)
@@ -208,7 +227,7 @@ struct MyMusicTransferView: View {
                     Button("読み込む", systemImage: "arrow.down.doc.fill") {
                         Task { await store.applyImport() }
                     }
-                    .buttonStyle(.borderedProminent).disabled(store.isBusy)
+                    .buttonStyle(.borderedProminent).disabled(store.isBusy || (preview.kind == .playlists && (preview.unresolved > 0 || preview.conflicts > 0)))
                     Button("キャンセル", role: .cancel) { store.cancelImport() }.disabled(store.isBusy)
                     if store.isBusy { ProgressView().controlSize(.small) }
                 }

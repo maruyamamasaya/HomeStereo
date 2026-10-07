@@ -436,10 +436,20 @@ private struct SongsTable: View {
     @Binding var columnCustomization: TableColumnCustomization<Track>
     var playSource: MyMusicPlaySource = .library
     @State private var randomDisplay = RandomTrackDisplay()
+    @State private var playlistAddition: PlaylistAdditionRequest?
 
     var body: some View {
         VStack(spacing: 0) {
             RandomTrackDisplayControls(display: randomDisplay, tracks: tracks)
+            if !selectedTrackIDs.isEmpty {
+                HStack {
+                    Text("\(selectedTrackIDs.count)曲を選択中").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("選択した\(selectedTrackIDs.count)曲をプレイリストに追加", systemImage: "text.badge.plus") {
+                        playlistAddition = PlaylistAdditionRequest(trackIDs: selectedTrackIDs)
+                    }
+                }.padding(.horizontal, 12).padding(.vertical, 8)
+            }
             Table(
                 randomDisplay.tracks ?? tracks,
                 selection: $library.selectedTrackIDs,
@@ -463,7 +473,7 @@ private struct SongsTable: View {
                     .help("ダブルクリックでキューの最後に追加")
                     .contextMenu {
                         let ids = selectedTrackIDs(for: track)
-                        QueueContextMenu(queue: queue, playlists: playlists, listening: listening, trackIDs: ids, startingAt: track.id)
+                        QueueContextMenu(queue: queue, playlists: playlists, listening: listening, trackIDs: ids, startingAt: track.id, onAddToPlaylist: { playlistAddition = PlaylistAdditionRequest(trackIDs: ids) })
                     }
                     .draggable(TrackDragPayload.encode(selectedTrackIDs(for: track)))
                 }
@@ -514,6 +524,9 @@ private struct SongsTable: View {
             // filter is cleared. Replace the native table with the prepared result.
             .id(library.browserPresentationID.uuidString + randomDisplay.presentationID.uuidString)
             .alternatingRowBackgrounds(.disabled)
+        }
+        .sheet(item: $playlistAddition) { request in
+            PlaylistDestinationPicker(store: playlists, trackIDs: request.trackIDs)
         }
         .onChange(of: library.browserPresentationID) { _, _ in randomDisplay.reset() }
         .onChange(of: playSource == .favorite ? listening.favorites.map(\.trackID) : []) { _, _ in
@@ -573,26 +586,15 @@ private struct SongsTable: View {
     }
 
     private func playlistMenu(_ track: Track) -> some View {
-        let compatiblePlaylists = playlists.compatiblePlaylists(for: [track.id])
-        return Menu {
-            if compatiblePlaylists.isEmpty {
-                Text("追加できるプレイリストがありません")
-            } else {
-                ForEach(compatiblePlaylists) { playlist in
-                    Button(playlist.name) {
-                        Task { await playlists.add(trackIDs: [track.id], to: playlist.id) }
-                    }
-                }
-            }
+        Button {
+            playlistAddition = PlaylistAdditionRequest(trackIDs: [track.id])
         } label: {
             Image(systemName: "text.badge.plus")
                 .foregroundStyle(Color.secondary)
                 .frame(width: 22, height: 24)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("プレイリストに追加")
+        .buttonStyle(.plain)
+        .help("この曲をプレイリストに追加")
         .accessibilityLabel("\(track.title)をプレイリストに追加")
     }
 
@@ -670,11 +672,11 @@ private struct SongsTable: View {
 
     private func selectedTrackIDs(for track: Track) -> [Track.ID] {
         guard library.selectedTrackIDs.contains(track.id) else { return [track.id] }
-        return tracks.map(\.id).filter { library.selectedTrackIDs.contains($0) }
+        return (randomDisplay.tracks ?? tracks).map(\.id).filter { library.selectedTrackIDs.contains($0) }
     }
 
     private var selectedTrackIDs: [Track.ID] {
-        tracks.map(\.id).filter { library.selectedTrackIDs.contains($0) }
+        (randomDisplay.tracks ?? tracks).map(\.id).filter { library.selectedTrackIDs.contains($0) }
     }
 
     private var tableSortOrder: Binding<[LibraryTrackComparator]> {
@@ -1176,6 +1178,7 @@ struct QueueContextMenu: View {
     let listening: ListeningStore
     let trackIDs: [Track.ID]
     var startingAt: Track.ID?
+    var onAddToPlaylist: (() -> Void)? = nil
     var body: some View {
         Button("今すぐ再生") { Task { await queue.playNow(trackIDs: trackIDs, startingAt: startingAt) } }
         Button("次に再生") { Task { await queue.playNext(trackIDs: trackIDs) } }
@@ -1184,7 +1187,9 @@ struct QueueContextMenu: View {
             Button(listening.isFavorite(id) ? "お気に入りから削除" : "お気に入りに追加") { Task { await listening.toggleFavorite(id) } }
         }
         let compatiblePlaylists = playlists.compatiblePlaylists(for: trackIDs)
-        if !compatiblePlaylists.isEmpty {
+        if let onAddToPlaylist {
+            Button("プレイリストに追加…", action: onAddToPlaylist)
+        } else if !compatiblePlaylists.isEmpty {
             Menu("プレイリストに追加") {
                 ForEach(compatiblePlaylists) { playlist in
                     Button(playlist.name) { Task { await playlists.add(trackIDs: trackIDs, to: playlist.id) } }

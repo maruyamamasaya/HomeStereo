@@ -113,13 +113,14 @@ public struct MyMusicJSONExportService: Sendable {
     }
 
     public func exportPlaylists(
-        playlists: [Playlist], tracks: [Track], links: [MyMusicTrackLink]
+        playlists: [Playlist], tracks: [Track], links: [MyMusicTrackLink], deduplicate: Bool = false
     ) throws -> MyMusicPlaylistExportResult {
         let tracksByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         let linksByHomeID = Dictionary(grouping: links, by: \.homeStereoTrackID)
-        var total = 0, exported = 0, missing = 0, conflicts = 0
+        var total = 0, exported = 0, missing = 0, conflicts = 0, duplicates = 0
         let records = playlists.map { playlist in
             var output: [MyMusicPlaylistTrackRecord] = []
+            var seen: [UUID: Track.ID] = [:]
             for item in playlist.items {
                 total += 1
                 guard let candidates = linksByHomeID[item.trackID], !candidates.isEmpty else {
@@ -128,6 +129,11 @@ public struct MyMusicJSONExportService: Sendable {
                 guard candidates.count == 1, let link = candidates.first else {
                     conflicts += 1; continue
                 }
+                if let existing = seen[link.myMusicTrackID] {
+                    if existing == item.trackID { duplicates += 1 } else { conflicts += 1 }
+                    continue
+                }
+                seen[link.myMusicTrackID] = item.trackID
                 let track = tracksByID[item.trackID]
                 output.append(MyMusicPlaylistTrackRecord(
                     trackID: link.myMusicTrackID, title: track?.title,
@@ -141,6 +147,10 @@ public struct MyMusicJSONExportService: Sendable {
                 kind: playlist.kind, tags: playlist.tags, tracks: output
             )
         }
+        guard missing == 0, conflicts == 0 else {
+            throw UserFacingError.persistenceFailed("未接続またはID競合の曲があるため、プレイリストJSONを書き出せません。Library JSONの照合を確認してください。")
+        }
+        guard duplicates == 0 || deduplicate else { throw MyMusicPlaylistDuplicateExportError(count: duplicates) }
         return MyMusicPlaylistExportResult(
             data: try exportPlaylists(records), totalTracks: total, exportedTracks: exported,
             missingMyMusicID: missing, conflictedTracks: conflicts
@@ -226,4 +236,9 @@ public enum MyMusicImportMergeService {
         for event in imported where eventIDs.insert(event.eventID).inserted { result.append(event) }
         return result
     }
+}
+
+public struct MyMusicPlaylistDuplicateExportError: LocalizedError, Sendable {
+    public let count: Int
+    public var errorDescription: String? { "プレイリスト内に同じ曲の重複が\(count)件あります。MyMusic向けJSONでは各曲を1回にまとめる必要があります。元のプレイリストは変更されません。" }
 }

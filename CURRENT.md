@@ -12,6 +12,20 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 
 ## Implemented
 
+- 分析の「ランキング」にアーティスト別再生回数／実聴時間とジャンル別再生回数を追加。アーティストは現在のジャンルプリセットを初期選択し、分析内で切替可能。上位20件／全件を比較バーで閲覧する。
+
+- MyMusic向けプレイリストJSONの書き出しで重複Track IDがある場合は件数を表示して確認する。承認した場合だけJSON内を最初の1回にまとめ、元のMacプレイリストは変更しない。
+
+- 再生キュー下部の空き領域に末尾追加用drop targetを追加。曲のdropで追加、キュー内項目のdropで末尾移動。drag中は強調表示し、空のキューでも受け付ける。
+
+- プレイリスト詳細の「キューに追加」で全体を末尾追加し、各曲の＋で個別追加できる。既存QueueStoreの利用可能曲判定と100曲上限を使用する。
+
+- 曲テーブルの追加アイコンと選択曲の一括追加は追加先選択シートを開く。通常／作業用、タグ／タグなしで絞り込み、複数追加先を選択。追加済み件数を表示し、未追加の曲だけを全追加先へ単一transactionで保存する。既存の重複は削除しない。
+
+- プレイリスト内の曲行にお気に入り・Good／Badボタンを追加。共有ListeningStore／PlaybackPreferenceStoreを使い、評価表示・上下限・MyMusic Preferencesの変更検知を既存操作と共有する。
+
+- プレイリスト管理メニューに2件の統合画面を追加。同じ種類のリストから新規IDで作成し、曲順・タグを引き継ぐ。重複曲の集約と元リストの保持／削除を選択できる。削除時は元リストをJSON保全し、新規保存と2件削除を単一transactionで実施する。
+
 - SSDP全件探索、重複排除、Device Descriptionとservice URL解析
 - 単一ファイルのtoken付きHTTP配信（GET/HEAD/Range）
 - AVTransport／RenderingControl SOAP操作と診断
@@ -33,7 +47,7 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 - MyMusic連携Sidebarの「MyMusic連携」からLibrary／Playlist／Preferences／Playback Eventsの4種類を個別にPreview／確認Importし、標準保存panelへExportする手動連携画面。PreferencesはJSON schemaを変えず、MyMusic ImportでMacを同じ状態へ揃えた後、schema v14で記録するMac側のFavorite／Good／Bad変更曲だけを件数・一覧Preview付きで差分Exportする。保存成功時だけ同じ変更tokenを送信済みにし、Preview後の再編集は次回分へ残す。Playback Eventsは既定の直近1か月または任意の開始日〜終了日、全期間を選んで書き出せる。Import Preview表示中でも別のImport／Exportへ切り替えられる
 - MyMusic連携Sidebarの「MyMusic適用状況」で全HomeStereo曲のローカルTrack ID、MyMusic TrackID、snapshot在籍、照合方法、Library JSON出力可否、Preferences／Events／MyMusic Playlist適用を曲単位で確認可能。Playlist／Preferences Import後は対応する画面Storeを即時再読込する
 - MyMusic連携Sidebarの臨時「開発者」で、MyMusic向け4種類のJSONを現在値から生成または既存ファイルから開き、文書設定と曲／イベント／プレイリストを1件ずつ表形式で編集して、形式検証後に別ファイルへ書き出せる。編集はSQLiteへ反映しない
-- MyMusic Playlist JSON v1の単一／複数形式、Canonical Track ID完全一致による部分Import、playlistID単位の冪等更新、MyMusic未接続曲を除外するExport。`kind`は交換互換用metadataとして維持しつつ、Sidebarでは全プレイリストを1画面に統合し、通常曲・作業用BGM・ハイレゾを混在できる。作業用曲は再生時間で推測せずgenreの「作業用BGM」だけで判定する
+- MyMusic Playlist JSON v1の単一／複数形式、Canonical Track ID完全一致による部分Import、playlistID単位の冪等更新、MyMusic未接続曲を除外するExport。`kind`は交換互換用metadataとして維持しつつ、Sidebarではkindで通常／作業用BGMを切り替える。既存の曲の混在は保持する。作業用曲は再生時間で推測せずgenreの「作業用BGM」だけで判定する
 - MyMusic Library v1の`relativePath`を両端末の共通音楽ルート以下に限定し、保存済みMyMusic ID→正規化path＋size／duration→移動時fingerprint→一意metadataの順で既存HomeStereo曲へ外部IDを関連付ける。端末固有絶対pathとHomeStereo ID再生成は行わない
 - 30,000曲fixture計測、DB index／未変更upsert省略、全曲Table表示、background並び替え、検索debounce、Artwork downsample
 - 曲一覧のfilter／検索では同じ曲集合・sort条件の全件sort済みbaseを再利用し、再構築をbackground actorで直列化する。filter解除時はnative tableを世代単位で置き換え、大量行の差分insertによる応答停止を避ける
@@ -175,3 +189,43 @@ Artist一覧にも「1曲のアーティストを隠す」を追加。通常曲�
 - 再生カレンダーを正方形カード、土日別の文字・枠色、選択日／週の強調、今日の点表示へ刷新。テーマ別の週末色・角丸・選択背景を適用し、ワイド画面はカレンダーと履歴を左右、狭い画面は上下に配置。
 - 再生バーの再生／一時停止・前後・お気に入り・シャッフル・リピートも44ptへ統一し、プレイリスト追加ボタン（選択パネル）と曲の詳細popoverを追加。狭い幅では操作群と音量を別行に配置。
 - カレンダーの日付は12pt、再生件数は23ptを主表示に変更。ワイド表示では700px幅のカレンダーと細い履歴列、狭い画面では最大680pxのカレンダーを上下配置。履歴rowも細い列向けに曲名／時刻／状態を分けた。
+
+
+## Playlist連携・タグ管理 Beta（2026-10-04）
+
+上部で通常／作業用BGMを切り替え、その種類に属するタグボタンで一覧を絞れる。新規作成とM3U8 Importは選択したkindで作る。プレイリスト詳細の「タグを編集」で追加・削除・既存タグ選択ができる。20個／40文字と重複正規化はMyMusic互換。タグ編集はID・曲順・kindを変更せずSQLiteへ保存しJSONへ出力する。
+
+Playlist JSON Importは未照合／ID競合曲があれば文書全体をrollbackする。Exportも未接続／競合曲を除外せず停止する。受信原本と置換前の全ローカルPlaylistをDBと同じdirectoryのPlaylistImportArchiveへatomic保存・read-back確認し、保管失敗では更新しない。Preview後の再編集はtransaction内でsnapshot比較して拒否する。受信内容への更新は確認画面に明示する。
+
+MyMusic側もplaylistIDを保持して再Importで複製を作らない。既に増えた重複は自動整理しない。原本の復元UI・外部backup包含、未照合参照の耐久保留と部分適用は未実装。全回帰testとmacOS build成功、実端末間の手動往復とタグUI操作は未検証。詳細はsessions/2026-10-04-playlist-interchange-fix.md。
+
+2026-10-04、既存deploy scriptでRelease 20261004152243を/Applications/HomeStereo.appへ導入・起動成功。MyMusicもVesperaへ導入・起動成功。記録: sessions/2026-10-04-playlist-deploy.md。
+
+
+## Playlist上部の重なり修正・タグなしfilter
+
+操作欄をsafeAreaInsetから一覧上のVStackへ移し、最上段Playlistが操作欄の下へ隠れる経路を除去した。種類・操作・タグを別行にし、狭い幅では操作ボタンが縦へ切り替わる。横スクロールのタグ欄は36ptで高さを確定する。「タグなし」は実際のタグ名と別状態で、選択kindのtags空Playlistだけを絞る。MyMusic側の一覧・曲追加先sheetにも同じfilterを追加した。XCTest 123件（3件skip、失敗0）、Swift Testing 85件、macOS build成功。詳細はsessions/2026-10-04-playlist-layout-untagged.md。
+
+2026-10-04、修正版Release 20261004153507を正式配置へ更新・起動し、最上段の欠け解消とタグなしfilterを実画面で確認した。
+
+## 期間分析・ランキング・月別振り返り Beta（2026-10-04）
+
+分析で全期間／今月／先月／直近30日／任意期間を選べる。期間指定は開始日以上・終了日の翌日未満の詳細eventから集計し、MyMusic累計playCountを期間へ配分しない。全期間の既存累計優先は維持する。
+
+ランキングは通常曲だけで曲／アーティスト／アルバム／ジャンルを回数／実聴時間で各50位まで表示する。ジャンルプリセットを全種類へ適用し、複数ジャンルはそれぞれへ計上する。アルバムは後続のランキング専用ページ変更でライブラリと同じアルバム名単位へ統一した。行から曲一覧を開いて再生・キュー追加できる。既存Queueの上限を使用する。
+
+履歴カレンダーの表示月に通常曲の時間、代表曲・アーティスト（event件数順）、前月との時間差を表示する。期間filterとは独立した全詳細snapshotを使う。前月の記録欠落と未再生は判別できず、記録上の0として説明する。
+
+作業用BGM／ハイレゾはランキング・概要の上位曲から除外し、分析内の別ページで期間別総時間と日別時間を表示する。分類は現在Libraryの既存判定を使い、両属性の曲は両時間ページへ含める。総概要と通常の履歴・評価は従来どおり全分類を対象とする。未解決曲の時間は用途別へ推測配分しない。
+
+2026-10-04、分析統合版Release 20261004234155を既存scripts/deploy-macos.shで/Applications/HomeStereo.appへ更新・起動成功。Release BUILD SUCCEEDED、署名・Bundle ID・実行ファイルSHA-256一致を確認。一時ビルドはscriptで整理。画面操作は未検証。追加testは実行せず、test端末作成・削除0。
+
+## ランキングの専用ページ・代表画像・比較バー（2026-10-04）
+
+ランキング入口から曲／アーティスト／アルバム／ジャンルの専用ページへ進む。各ページに再生回数と実聴時間の比較バーを各50位まで表示し、幅が十分なら2列、狭ければ1列にする。行から曲一覧・再生・キュー追加を維持する。
+
+曲のアートワークは既存CachedArtwork／ArtworkCacheを使用。Artist／Album／Genreは対象曲のID順で画像ありの先頭曲（なければ先頭曲）を固定選択する。未再生曲も代表選択のmembershipへ含め、同じ曲集合なら期間・指標変更で画像を変えない。画像未取得は既存music.note fallback。画像抽出の全曲事前実行や乱数は追加しない。
+
+ランキング用集計はAnalyticsService.rankingPageがMainActor外で行い、完成した上位50件だけを表示する。バー値・合計・代表IDを保持し、SwiftUI描画時に全曲を再集計しない。Albumは既存ライブラリと同じアルバム名単位へ統一し、異なるTrack Artistで分割しない。用途除外と期間集計の契約は維持する。
+
+ランキング画面版Release 20261004235246を正式配置へ更新・起動成功。XCTest 136件（3 skip）、Swift Testing 85件、Debug／Release build成功。実画面で専用ページ入口とArtistの画像・比較バーを確認。詳細: sessions/2026-10-04-ranking-artwork-pages.md。

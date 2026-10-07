@@ -1,7 +1,7 @@
 # MyMusic / HomeStereo データ交換・保全契約
 
 契約ID: `mymusic-homestereo-interchange`
-文書revision: 2 / 更新日: 2026-10-04
+文書revision: 3 / 更新日: 2026-10-04
 状態: 共通設計方針。既存wire形式を変更しない。未実装の保全要件は下記に区別する。
 
 ## 目的と責務
@@ -45,7 +45,16 @@ Features・音量解析・ジャンルプリセット等は個別の既存契約
 - HomeStereoはMyMusic IDとローカルIDを分離し、Library snapshotから消えたlinkを在籍外として扱い、関連履歴を削除しない設計を記録している。未解決の外部Preferences／Eventsは結果へ残すがDBへ保存しない。原本の耐久保留は達成未確認。
 - HomeStereoのPreference変更管理はExportファイル保存成功時に世代一致のdirtyを解除する。相手での適用を保証する仕組みにはなっていない。
 - HomeStereoの既存連携文書には、LibraryのplayCountを全期間回数の正本とする記述と、Eventsを正本とする記述が併存する。集計snapshotと詳細eventの対象範囲を決めるまで単純加算しない。
-- 両実装でのvalidation完全一致、同一ID異内容の競合保全、未照合Playlist参照の無欠落往復、全項目の原本保留・受領確認・復元は未検証。今回の変更は文書のみで、既存動作を変更しない。
+- 両実装でのvalidation完全一致、同一event ID異内容の競合保全、未照合Playlist参照の耐久保留・部分適用、全項目の受領確認・復元は未検証。
+
+## Playlist往復保全 Beta（2026-10-04）
+
+- MyMusicはplaylistID付きJSONを同じIDで受け、同一内容は追加・書換えしない。IDなし旧形式は新規追加を維持する。既存複製の推測統合・削除は行わない。
+- 異内容の更新は確認画面で明示する。MyMusicは更新確認後に保存し、HomeStereoは既存Import Previewで確認する。両側でPreview／確認時のPlaylist snapshotと確定時の値を比較し、再編集があれば中止する。
+- 両側の適用前に原本bytesと更新前の全ローカルPlaylistをhash名でatomic保存しread-back確認する。MyMusicはApplication Support/MyMusic/PlaylistImportArchive、HomeStereoはSQLite directoryのPlaylistImportArchive。保管・保存失敗では既存Playlistを変更しない。自動削除しない。復元UI・原本の外部backup包含・原本とsnapshotを組にした受領記録は未実装。
+- 未照合／種別非互換（MyMusic）／Track ID競合（HomeStereo）があるPlaylist文書は全体のImportを停止する。JSON Exportも未解決参照を除外せず停止する。これは破壊的な部分反映を止める段階的対策であり、未照合参照を保持して部分適用するDI-006の完成ではない。
+- HomeStereoのタグ編集・filterは受信タグの保持に加え、同じ配列を編集してJSONへ出力する。MyMusic互換の20個／40文字と重複正規化を使う。JSONの不正なタグ・kind・IDを黙って初期値へ変更しない。MyMusic旧JSONでtags欠落の場合は既存タグを維持し、明示の空配列は確認後に削除として反映する。
+- JSON wire v1とSQLite schema v14は変更しない。検索条件・ローカル説明・Artworkは共通JSONの対象外であり、MyMusicの既存Playlist更新ではローカル値を保持する。端末間の編集競合を自動mergeする仕組みは未実装。
 
 ## 互換性の完成条件
 

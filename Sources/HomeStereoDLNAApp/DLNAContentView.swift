@@ -97,7 +97,7 @@ struct DLNAContentView: View {
                     case .folders: LibraryFoldersView(library: library)
                     case .queue: QueueView(playback: store, queue: queue, library: library)
                     case .playlists:
-                        PlaylistsView(playback: store, store: playlists, queue: queue, library: library)
+                        PlaylistsView(playback: store, store: playlists, queue: queue, library: library, listening: listening, preferences: preferences)
                     case .favorites:
                         ListeningView(
                             playback: store, store: listening, queue: queue,
@@ -111,7 +111,7 @@ struct DLNAContentView: View {
                             genrePresets: genrePresets, mode: .history
                         )
                     case .analytics:
-                        AnalyticsView(playback: store, queue: queue, library: library, store: analytics, features: features)
+                        AnalyticsView(playback: store, queue: queue, library: library, store: analytics, features: features, genrePresets: genrePresets)
                     case .genrePresets: GenreDisplayPresetsView(store: genrePresets, library: library)
                     case .backup: BackupView(store: backup)
                     case .myMusic: MyMusicTransferView(store: myMusic, features: features)

@@ -25,6 +25,21 @@ public final class PlaylistStore {
         playlists.filter { $0.playlistKind == kind }
     }
 
+    public func playlists(of kind: PlaylistKind, tagged tag: String?, untaggedOnly: Bool = false) -> [Playlist] {
+        let matchingKind = playlists(of: kind)
+        if untaggedOnly { return matchingKind.filter { $0.tags.isEmpty } }
+        guard let tag else { return matchingKind }
+        let key = PlaylistTagRules.comparisonKey(for: tag)
+        return matchingKind.filter { $0.tags.contains { PlaylistTagRules.comparisonKey(for: $0) == key } }
+    }
+
+    public func tags(of kind: PlaylistKind) -> [String] {
+        var keys = Set<String>()
+        return playlists(of: kind).flatMap(\.tags).filter {
+            keys.insert(PlaylistTagRules.comparisonKey(for: $0)).inserted
+        }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
     public func selectedPlaylist(of kind: PlaylistKind) -> Playlist? {
         selectedPlaylist.flatMap { $0.playlistKind == kind ? $0 : nil }
     }
@@ -51,10 +66,36 @@ public final class PlaylistStore {
         catch { message = error.localizedDescription }
     }
 
+    public func merge(first: Playlist, second: Playlist, name: String, deduplicate: Bool, removeSources: Bool) async throws {
+        let merged = try await repository.mergePlaylists(first: first, second: second, name: name,
+            deduplicate: deduplicate, removeSources: removeSources)
+        await load()
+        selectedPlaylistID = merged.id
+        selectedPlaylistIDs = [merged.id]
+        selectedItemIDs = []
+    }
+
     public func rename(id: UUID, name: String) async {
         guard var playlist = playlists.first(where: { $0.id == id }) else { return }
         let value = name.trimmingCharacters(in: .whitespacesAndNewlines); guard !value.isEmpty else { return }
         playlist.name = value; playlist.updatedAt = .now; await save(playlist)
+    }
+
+    @discardableResult
+    public func setTags(_ tags: [String], for id: UUID) async -> Bool {
+        guard var playlist = playlists.first(where: { $0.id == id }) else { return false }
+        do {
+            let normalized = try PlaylistTagRules.validatedTags(tags)
+            guard playlist.tags != normalized else { return true }
+            playlist.tags = normalized
+            playlist.updatedAt = .now
+            try await repository.savePlaylist(playlist)
+            await load()
+            return true
+        } catch {
+            message = error.localizedDescription
+            return false
+        }
     }
 
     public func delete(id: UUID) async {
@@ -78,14 +119,23 @@ public final class PlaylistStore {
         } catch { message = error.localizedDescription }
     }
 
-    public func add(trackIDs: [Track.ID], to playlistID: UUID) async {
-        guard var playlist = playlists.first(where: { $0.id == playlistID }) else { return }
-        let accepted = trackIDs.filter { library.track(id: $0) != nil }
-        guard !accepted.isEmpty else {
-            return
+    public func addedTrackCount(_ trackIDs: [Track.ID], in playlist: Playlist) -> Int {
+        Set(trackIDs).intersection(Set(playlist.items.map(\.trackID))).count
+    }
+
+    @discardableResult
+    public func addUnique(trackIDs: [Track.ID], to playlistIDs: [UUID]) async throws -> Int {
+        guard !trackIDs.isEmpty, trackIDs.allSatisfy({ library.track(id: $0) != nil }) else {
+            throw UserFacingError.persistenceFailed("ライブラリにない曲は追加できません。曲を選び直してください。")
         }
-        playlist.items.append(contentsOf: accepted.map { PlaylistItem(trackID: $0) })
-        playlist.updatedAt = .now; await save(playlist)
+        let count = try await repository.appendUniqueTracks(trackIDs, to: playlistIDs)
+        await load()
+        return count
+    }
+
+    public func add(trackIDs: [Track.ID], to playlistID: UUID) async {
+        do { try await addUnique(trackIDs: trackIDs, to: [playlistID]) }
+        catch { message = error.localizedDescription }
     }
 
     public func addCurrentQueue(to playlistID: UUID) async { await add(trackIDs: queue.items.map(\.trackID), to: playlistID) }

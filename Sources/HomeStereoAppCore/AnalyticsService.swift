@@ -2,16 +2,19 @@ import Foundation
 
 public enum AnalyticsService {
     public static func makeSnapshot(
-        context: AnalyticsContext, now: Date = .now, calendar: Calendar = .current
+        context: AnalyticsContext, now: Date = .now, calendar: Calendar = .current,
+        interval: DateInterval? = nil
     ) -> AnalyticsSnapshot {
         let tracksByID = Dictionary(uniqueKeysWithValues: context.tracks.map { ($0.id, $0) })
         let favorites = Set(context.favorites.map(\.trackID))
         let preferences = Dictionary(uniqueKeysWithValues: context.preferences.map { ($0.trackID, $0.playbackPreference) })
-        let events = context.events.sorted { $0.playedAt > $1.playedAt }
+        let events = context.events.filter { event in
+            interval.map { event.playedAt >= $0.start && event.playedAt < $0.end } ?? true
+        }.sorted { $0.playedAt > $1.playedAt }
         let qualified = events.filter { MyMusicPlaybackPolicy.countsAsPlay(
             listenedSeconds: $0.playDuration, trackDuration: $0.trackDuration
         ) }
-        let usesMyMusicPlayCount = !context.myMusicPlayCounts.isEmpty
+        let usesMyMusicPlayCount = interval == nil && !context.myMusicPlayCounts.isEmpty
         let myMusicCountsByTrack = Dictionary(uniqueKeysWithValues: context.myMusicPlayCounts.compactMap {
             value in value.homeStereoTrackID.map { ($0, value) }
         })
@@ -207,5 +210,105 @@ public enum AnalyticsService {
 
     private static func safeSeconds(_ value: TimeInterval) -> TimeInterval {
         value.isFinite ? max(0, value) : 0
+    }
+}
+
+public extension AnalyticsService {
+    static func rankings(tracks: [AnalyticsTrackSummary], artistPreset: GenreDisplayPreset? = nil) -> AnalyticsRankings {
+        let enabled = artistPreset.map { Set($0.displayGenreNames) }
+        var artists: [String: AnalyticsGroupRanking] = [:]
+        var genres: [String: AnalyticsGroupRanking] = [:]
+        for track in tracks {
+            let genre = track.genre.trimmingCharacters(in: .whitespacesAndNewlines)
+            let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            let seconds = track.totalPlaybackDuration.isFinite ? max(0, track.totalPlaybackDuration) : 0
+            let count = max(0, track.playCount)
+            guard count > 0 || seconds > 0 else { continue }
+            let genreName = genre.isEmpty ? "ジャンル未設定" : genre
+            var genreRow = genres[genreName] ?? AnalyticsGroupRanking(name: genreName, playCount: 0, playbackDuration: 0, trackCount: 0)
+            genreRow.playCount += count; genreRow.playbackDuration += seconds; genreRow.trackCount += 1
+            genres[genreName] = genreRow
+            if let enabled {
+                let accepted = genre.isEmpty ? artistPreset?.includesUnassignedGenre == true
+                    : enabled.contains(genre) || GenreDisplayPreset.fixedGenreNames.contains(genre)
+                guard accepted else { continue }
+            }
+            let artistName = artist.isEmpty ? "アーティスト未設定" : artist
+            var artistRow = artists[artistName] ?? AnalyticsGroupRanking(name: artistName, playCount: 0, playbackDuration: 0, trackCount: 0)
+            artistRow.playCount += count; artistRow.playbackDuration += seconds; artistRow.trackCount += 1
+            artists[artistName] = artistRow
+        }
+        let byCount: (AnalyticsGroupRanking, AnalyticsGroupRanking) -> Bool = {
+            $0.playCount == $1.playCount ? $0.name < $1.name : $0.playCount > $1.playCount
+        }
+        let byDuration: (AnalyticsGroupRanking, AnalyticsGroupRanking) -> Bool = {
+            $0.playbackDuration == $1.playbackDuration ? $0.name < $1.name : $0.playbackDuration > $1.playbackDuration
+        }
+        return AnalyticsRankings(
+            artistsByCount: artists.values.filter { $0.playCount > 0 }.sorted(by: byCount),
+            artistsByDuration: artists.values.filter { $0.playbackDuration > 0 }.sorted(by: byDuration),
+            genresByCount: genres.values.filter { $0.playCount > 0 }.sorted(by: byCount)
+        )
+    }
+}
+
+public extension AnalyticsService {
+    static func events(in snapshot: AnalyticsSnapshot, interval: DateInterval, trackIDs: Set<Track.ID>? = nil) -> [AnalyticsEventRow] {
+        snapshot.historyDays.flatMap(\.events).filter {
+            $0.startedAt >= interval.start && $0.startedAt < interval.end && (trackIDs?.contains($0.trackID) ?? true)
+        }
+    }
+    static func normalTrackIDs(_ tracks: [Track]) -> Set<Track.ID> {
+        Set(tracks.filter { !$0.isEligibleForWorkPlayback && !$0.isHighResolutionAudio }.map(\.id))
+    }
+}
+
+public extension AnalyticsService {
+    static func rankingPage(
+        summaries: [AnalyticsTrackSummary], libraryTracks: [Track],
+        kind: AnalyticsRankingKind, preset: GenreDisplayPreset? = nil
+    ) -> AnalyticsRankingPage {
+        let allowed = Dictionary(uniqueKeysWithValues: libraryTracks.filter { track in
+            guard track.isRegularLibraryTrack else { return false }
+            guard let preset else { return true }
+            return track.normalizedGenreNames.isEmpty ? preset.includesUnassignedGenre
+                : !track.normalizedGenreNames.isDisjoint(with: Set(preset.displayGenreNames))
+        }.map { ($0.id, $0) })
+        var groups: [String: [AnalyticsTrackSummary]] = [:]
+        for row in summaries where allowed[row.trackID] != nil {
+            let keys: [String]
+            switch kind {
+            case .track: keys = [row.trackID.uuidString]
+            case .artist: keys = [row.artist.isEmpty ? "アーティスト未設定" : row.artist]
+            case .album: keys = [row.album.isEmpty ? "アルバム未設定" : row.album]
+            case .genre:
+                let genres = allowed[row.trackID]!.normalizedGenreNames
+                keys = genres.isEmpty ? ["ジャンル未設定"] : Array(genres)
+            }
+            for key in keys { groups[key, default: []].append(row) }
+        }
+        let rows = groups.map { key, values in
+            // Membership includes unplayed tracks, so changing the period or metric
+            // does not choose another representative image for the same group.
+            let ids = values.map(\.trackID).sorted { $0.uuidString < $1.uuidString }
+            let representative = ids.first { allowed[$0]?.hasArtwork == true } ?? ids.first
+            return AnalyticsRankingRow(
+                id: key, title: kind == .track ? values[0].title : key, trackIDs: ids,
+                artworkTrackID: representative,
+                playCount: values.reduce(0) { $0 + max(0, $1.playCount) },
+                seconds: values.reduce(0) { $0 + safeSeconds($1.totalPlaybackDuration) }
+            )
+        }
+        func ties(_ a: AnalyticsRankingRow, _ b: AnalyticsRankingRow) -> Bool {
+            a.title == b.title ? a.id < b.id : a.title.localizedStandardCompare(b.title) == .orderedAscending
+        }
+        return AnalyticsRankingPage(
+            byCount: Array(rows.filter { $0.playCount > 0 }.sorted {
+                $0.playCount == $1.playCount ? ties($0, $1) : $0.playCount > $1.playCount
+            }.prefix(50)),
+            byTime: Array(rows.filter { $0.seconds > 0 }.sorted {
+                $0.seconds == $1.seconds ? ties($0, $1) : $0.seconds > $1.seconds
+            }.prefix(50))
+        )
     }
 }

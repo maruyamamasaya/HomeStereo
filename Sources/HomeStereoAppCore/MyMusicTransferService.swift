@@ -44,6 +44,7 @@ public struct MyMusicImportPreview: Equatable, Sendable {
     public let updatedPlaylists: Int
     public let importedTracks: Int
     public let details: [MyMusicImportPreviewDetail]
+    public var playlistSnapshot: [Playlist]? = nil
 }
 
 public struct MyMusicPreferenceExportPreviewItem: Identifiable, Equatable, Sendable {
@@ -99,17 +100,17 @@ public struct MyMusicTransferService: Sendable {
         }
     }
 
-    public func apply(_ data: Data, as kind: MyMusicDocumentKind) async throws {
+    public func apply(_ data: Data, as kind: MyMusicDocumentKind, expectedPlaylists: [Playlist]? = nil) async throws {
         switch kind {
         case .library: _ = try await persistence.importLibrary(data)
         case .preferences: _ = try await persistence.importPreferences(data)
         case .playbackEvents: _ = try await persistence.importPlaybackEvents(data)
-        case .playlists: _ = try await persistence.importPlaylists(data)
+        case .playlists: _ = try await persistence.importPlaylists(data, expectedPlaylists: expectedPlaylists)
         }
     }
 
     public func export(
-        _ kind: MyMusicDocumentKind, playbackEventsRange: Range<Date>? = nil
+        _ kind: MyMusicDocumentKind, playbackEventsRange: Range<Date>? = nil, deduplicatePlaylists: Bool = false
     ) async throws -> (
         data: Data, exported: Int?, unresolved: Int?, total: Int?, conflicts: Int?
     ) {
@@ -124,7 +125,7 @@ public struct MyMusicTransferService: Sendable {
             )
             return (result.data, result.exported, result.unresolved, nil, nil)
         case .playlists:
-            let result = try await persistence.exportPlaylists()
+            let result = try await persistence.exportPlaylists(deduplicate: deduplicatePlaylists)
             return (
                 result.data, result.exportedTracks, result.missingMyMusicID,
                 result.totalTracks, result.conflictedTracks
@@ -308,7 +309,7 @@ public struct MyMusicTransferService: Sendable {
             unchanged: 0, unmatched: 0, ambiguous: 0, conflicts: conflicts, invalid: 0,
             missingFromSnapshot: 0, pendingUpdates: 0, pendingInserts: 0, duplicates: 0,
             unresolved: unresolved, addedPlaylists: added, updatedPlaylists: updated,
-            importedTracks: imported, details: details
+            importedTracks: imported, details: details, playlistSnapshot: context.playlists
         )
     }
 
