@@ -163,7 +163,8 @@ final class LibraryPersistenceTests: XCTestCase {
         XCTAssertEqual(result.tracks.count, 1)
         XCTAssertEqual(result.tracks[0].id, original.id)
         XCTAssertEqual(result.tracks[0].relativePath, "renamed.wav")
-        XCTAssertTrue(result.notices.contains { $0.message.contains("fileResourceIdentifier") })
+        XCTAssertTrue(result.notices.contains { $0.message.contains("fileResourceIdentifier") && $0.kind == .relocation })
+        XCTAssertFalse(result.notices.contains { $0.kind == .error })
         try await repository.applySuccessfulScan(folderID: folder.id, tracks: result.tracks, scannedAt: .now)
 
         let retainedTracks = try await repository.loadTracks(folderID: folder.id)

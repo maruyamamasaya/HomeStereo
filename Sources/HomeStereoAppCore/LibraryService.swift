@@ -89,12 +89,14 @@ public struct LibraryService: LibraryScanning {
                             matchedExistingIDs.insert(trackID)
                             notices.append(ScanNotice(
                                 relativePath: candidate.relativePath,
-                                message: "Track IDを維持しました（\(reason.rawValue)一致）。"
+                                message: "Track IDを維持しました（\(reason.rawValue)一致）。",
+                                kind: .relocation
                             ))
                         case let .ambiguous(count, reason):
                             notices.append(ScanNotice(
                                 relativePath: candidate.relativePath,
-                                message: "移動候補が\(count)件あり曖昧なため別Trackとして登録します（\(reason.rawValue)）。"
+                                message: "移動候補が\(count)件あり曖昧なため別Trackとして登録します（\(reason.rawValue)）。",
+                                kind: .warning
                             ))
                         case .none:
                             break
@@ -105,7 +107,7 @@ public struct LibraryService: LibraryScanning {
                     else { progress.updated += 1 }
                 } else {
                     progress.failed += 1
-                    notices.append(ScanNotice(relativePath: candidate.relativePath, message: "コピーまたは更新中のため次回scanまで保留します。"))
+                    notices.append(ScanNotice(relativePath: candidate.relativePath, message: "コピーまたは更新中のため次回scanまで保留します。", kind: .warning))
                     if let previous { scanned.append(previous) }
                 }
             } else {

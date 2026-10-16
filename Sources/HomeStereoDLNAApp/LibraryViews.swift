@@ -1279,18 +1279,22 @@ struct LibraryFoldersView: View {
                     scanCard(progress)
                 }
 
-                if !library.scanNotices.isEmpty {
-                    DisclosureGroup("読み込めなかった項目（\(library.scanNotices.count)件）") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(library.scanNotices) {
-                                Text("\($0.relativePath ?? "場所不明"): \($0.message)").font(.caption)
+                ForEach(ScanNotice.Kind.allCases, id: \.self) { kind in
+                    let notices = library.scanNotices.filter { $0.kind == kind }
+                    if !notices.isEmpty {
+                        DisclosureGroup("\(kind.title)（\(notices.count)件）") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(notices) {
+                                    Text("\($0.relativePath ?? "場所不明"): \($0.message)").font(.caption)
+                                }
                             }
+                            .padding(.top, 8)
                         }
-                        .padding(.top, 8)
+                        .padding(14)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
                     }
-                    .padding(14)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
                 }
+
 
                 Text("最終自動更新: \(library.lastAutomaticUpdate?.formatted(date: .abbreviated, time: .shortened) ?? "未実行")")
                     .font(.caption).foregroundStyle(.secondary)

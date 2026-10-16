@@ -4,6 +4,8 @@ HomeStereoは、Mac上で選択した音源をLAN内DLNA RendererへHTTP配信�
 
 ## Current Phase
 
+2026-10-16: scan通知の成功／注意／エラー分離を含む作業ツリーを専用スクリプトでRelease buildし、`/Applications/HomeStereo.app`へ正式配置・起動した（build `20261016181544`）。署名と実行ファイルhash一致を確認。詳細は[sessions/2026-10-16-scan-notice-categories.md](sessions/2026-10-16-scan-notice-categories.md)。
+
 2026-10-08: 保存状態JSON backup v2を含む現在の作業ツリーをRelease buildし、`/Applications/HomeStereo.app`へ正式配置・起動した（build `20261008073746`、bundle `jp.local.HomeStereo.Beta`）。署名／実行ファイルhash一致を確認。実データrestore・実機UI／DLNA再生は未確認。
 
 要求されたDLNA単曲再生からTrack Identityまでの実装と全体監査は完了。SRS-HG1／HG10の探索、低音量固定ファイル再生、再生中Stop、Audio Hijack経由のL/R分離と1秒segment送信まで実機確認済みで、音響同期と長時間driftの確認が残っている。
@@ -13,6 +15,8 @@ HomeStereoは、Mac上で選択した音源をLAN内DLNA RendererへHTTP配信�
 Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change）→BlackHole 2ch、全ブロック有効、Output 2%、Auto Run Off、Stoppedまで設定済み。LEFT ONLYは左−54.0dBFS／右−160dBFS、RIGHT ONLYは左−160dBFS／右−54.0dBFSで、反転・漏れ・clippingなしを確認した。検証済みsegmentは音量5/100で両RendererがHTTP GET、Play、1秒完走、`STOPPED`まで成功した。詳細な現在地と課題は[`docs/sony-stereo-bridge/status-and-history.md`](docs/sony-stereo-bridge/status-and-history.md)を正本とする。
 
 ## Implemented
+
+- ライブラリscan結果は「移動を確認した曲（Track IDを維持）」「確認が必要な項目」「読み込めなかった項目」を件数付きで分離する。移動成功通知を読み込み失敗として表示しない。
 
 - 分析の「ランキング」にアーティスト別再生回数／実聴時間とジャンル別再生回数を追加。アーティストは現在のジャンルプリセットを初期選択し、分析内で切替可能。上位20件／全件を比較バーで閲覧する。
 

@@ -233,11 +233,23 @@ public struct ScanProgress: Equatable, Sendable {
 }
 
 public struct ScanNotice: Identifiable, Equatable, Sendable {
+    public enum Kind: CaseIterable, Sendable {
+        case relocation, warning, error
+
+        public var title: String {
+            switch self {
+            case .relocation: "移動を確認した曲（Track IDを維持）"
+            case .warning: "確認が必要な項目"
+            case .error: "読み込めなかった項目"
+            }
+        }
+    }
     public let id: UUID
     public let relativePath: String?
     public let message: String
-    public init(id: UUID = UUID(), relativePath: String? = nil, message: String) {
-        self.id = id; self.relativePath = relativePath; self.message = message
+    public let kind: Kind
+    public init(id: UUID = UUID(), relativePath: String? = nil, message: String, kind: Kind = .error) {
+        self.id = id; self.relativePath = relativePath; self.message = message; self.kind = kind
     }
 }
 
