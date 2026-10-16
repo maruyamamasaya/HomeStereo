@@ -7,7 +7,7 @@ public struct TrackPreference: Equatable, Sendable {
 
     public init(trackID: Track.ID, playbackPreference: Int, updatedAt: Date = .now) {
         self.trackID = trackID
-        self.playbackPreference = min(10, max(-10, playbackPreference))
+        self.playbackPreference = min(15, max(-10, playbackPreference))
         self.updatedAt = updatedAt
     }
 }

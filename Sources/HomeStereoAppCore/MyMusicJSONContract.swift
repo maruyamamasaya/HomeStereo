@@ -240,8 +240,8 @@ public enum MyMusicJSONCodec {
             throw MyMusicJSONContractError.unsupportedVersion(value.schemaVersion)
         }
         guard Set(value.tracks.map(\.trackId)).count == value.tracks.count else { throw invalid("trackIdが重複") }
-        guard value.tracks.allSatisfy({ (-10...10).contains($0.playbackPreference) }) else {
-            throw invalid("playbackPreferenceは-10〜10が必要")
+        guard value.tracks.allSatisfy({ (-10...15).contains($0.playbackPreference) }) else {
+            throw invalid("playbackPreferenceは-10〜15が必要")
         }
     }
 

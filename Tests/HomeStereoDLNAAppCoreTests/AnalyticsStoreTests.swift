@@ -39,14 +39,14 @@ import Testing
     #expect(store.preference(for: trackID) == -4)
     #expect(await repository.savedValues == [-4])
 
-    for _ in 0..<20 { await store.adjustPreference(trackID: trackID, delta: 1) }
-    #expect(store.preference(for: trackID) == 10)
-    #expect(await repository.savedValues.last == 10)
+    for _ in 0..<30 { await store.adjustPreference(trackID: trackID, delta: 1) }
+    #expect(store.preference(for: trackID) == 15)
+    #expect(await repository.savedValues.last == 15)
     let savedCountAtUpperLimit = await repository.savedValues.count
     await store.adjustPreference(trackID: trackID, delta: 1)
     #expect(await repository.savedValues.count == savedCountAtUpperLimit)
 
-    for _ in 0..<20 { await store.adjustPreference(trackID: trackID, delta: -1) }
+    for _ in 0..<30 { await store.adjustPreference(trackID: trackID, delta: -1) }
     #expect(store.preference(for: trackID) == -10)
     #expect(await repository.savedValues.last == -10)
     let savedCountAtLowerLimit = await repository.savedValues.count

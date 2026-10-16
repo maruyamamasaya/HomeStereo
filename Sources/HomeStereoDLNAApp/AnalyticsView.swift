@@ -18,7 +18,7 @@ struct AnalyticsView: View {
     @State private var selectedDate = Date.now
     @State private var month = Date.now
     @State private var weekly = false
-    @State private var ratingSelection = 11
+    @State private var ratingSelection: Int? = nil
     @State private var voiceSelection = 0
     @State private var rateSort = 0
     @State private var resetAllConfirmation = false
@@ -431,21 +431,21 @@ struct AnalyticsView: View {
         }.padding(16)
     }
     private var ratings: some View {
-        let groups = Dictionary(grouping: store.snapshot.allTracks, by: { $0.playbackPreference ?? 11 })
+        let groups = Dictionary(grouping: store.snapshot.allTracks, by: { $0.playbackPreference })
         return VStack(alignment: .leading, spacing: 12) {
             Text("Good / Bad の評価別に曲を探す").font(.title2.bold())
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 82))], spacing: 8) {
-                ForEach(Array(stride(from: 10, through: -10, by: -1)) + [11], id: \.self) { rating in
+                ForEach(Array(stride(from: 15, through: -10, by: -1)).map { Optional($0) } + [nil], id: \.self) { rating in
                     Button { ratingSelection = rating } label: {
                         VStack(spacing: 4) {
-                            Text(rating == 11 ? "未設定" : (rating > 0 ? "+\(rating)" : "\(rating)")).font(.headline)
+                            Text(rating.map { $0 > 0 ? "+\($0)" : "\($0)" } ?? "未設定").font(.headline)
                             Text("\(groups[rating, default: []].count)曲").font(.caption)
                         }.frame(maxWidth: .infinity).padding(8)
                             .background(ratingSelection == rating ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                     }.buttonStyle(.plain)
                 }
             }
-            Text(ratingSelection == 11 ? "未設定の曲" : "評価 \(ratingSelection) の曲").font(.headline)
+            Text(ratingSelection.map { "評価 \($0) の曲" } ?? "未設定の曲").font(.headline)
             List(groups[ratingSelection, default: []]) { trackRow($0, showsRating: true) }
                 .overlay { if groups[ratingSelection, default: []].isEmpty { ContentUnavailableView("この評価の曲はありません", systemImage: "hand.thumbsup") } }
         }.padding(16)
@@ -498,7 +498,7 @@ struct AnalyticsView: View {
     private func preferenceMenu(_ value: AnalyticsTrackSummary) -> some View {
         Menu {
             Button("Good (+1)", systemImage: "hand.thumbsup") { adjustPreference(value.trackID, 1) }
-                .disabled((value.playbackPreference ?? 0) >= 10)
+                .disabled((value.playbackPreference ?? 0) >= 15)
             Button("Neutral (0)", systemImage: "minus") { setPreference(value.trackID, 0) }
             Button("Bad (-1)", systemImage: "hand.thumbsdown") { adjustPreference(value.trackID, -1) }
                 .disabled((value.playbackPreference ?? 0) <= -10)

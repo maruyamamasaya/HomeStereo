@@ -235,3 +235,11 @@ MyMusic側もplaylistIDを保持して再Importで複製を作らない。既に
 ## 保存状態JSONバックアップ Beta（2026-10-08）
 
 書き出しをbackup schema v2へ拡張。SQLite v14全体、特徴量、PlaylistImportArchive、AnalysisRuns、選定設定を保持する。旧v1取り込みを維持し、旧形式にない既存tags/Playlist連携IDを保持する。v2は確認後にpendingへ準備し、次回起動時に旧rootを退避して復元する。音源とAnalyzer cache/modelは別保全。詳細と検証範囲は[JSON backup](docs/json-backup.md)。実Macでの移行・大容量性能・権限再設定は未検証。
+
+
+## 評価上限15・選曲効果10で最大 Beta（2026-10-16）
+
+保存・編集・交換範囲を-10〜15へ拡張。従来-10〜10の選曲weightを維持し、11〜15は10と同じ効果。Watch、HomeStereo、Local/Desktop/Static Analyticsを対応。HomeStereoはSQLite v15へ移行し旧v14保存状態backupの復元を維持。旧受信アプリへ11以上を渡す互換性はない。実機への導入・実ユーザーDBでの移行／復元操作は未実施。検証はsessions/2026-10-16-preference-range.mdを参照。
+
+
+2026-10-16: 評価-10〜15・選曲効果10で最大、SQLite v15／旧v14保存状態backup互換を含む作業ツリーを専用scriptでRelease buildし、/Applications/HomeStereo.appへ正式配置・起動成功。build 20261016185415、jp.local.HomeStereo.Beta。署名・実行ファイルhash一致と起動processを確認。豪華なGood演出はMyMusicのみ。実ユーザーデータの復元操作は未実施。詳細はsessions/2026-10-16-preference-effects-deploy.md。

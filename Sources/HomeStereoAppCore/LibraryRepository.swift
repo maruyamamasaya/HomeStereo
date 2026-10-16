@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting, AnalyticsPersisting, TrackPreferencePersisting, GenreDisplayPresetPersisting, @unchecked Sendable {
-    public static let currentSchemaVersion = 14
+    public static let currentSchemaVersion = 15
     private let lock = NSRecursiveLock()
     private var database: OpaquePointer?
     private let playlistArchiveDirectory: URL
@@ -1283,7 +1283,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
             home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
             mymusic_track_id TEXT NOT NULL UNIQUE, playback_preference INTEGER NOT NULL,
             favorite INTEGER NOT NULL, exported_at REAL NOT NULL,
-            CHECK(playback_preference BETWEEN -10 AND 10), CHECK(favorite IN (0, 1))
+            CHECK(playback_preference BETWEEN -10 AND 15), CHECK(favorite IN (0, 1))
         );
         CREATE TABLE IF NOT EXISTS mymusic_library_play_counts(
             mymusic_track_id TEXT PRIMARY KEY,
@@ -1304,7 +1304,7 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
         );
         CREATE TABLE IF NOT EXISTS track_preferences(
             home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
-            playback_preference INTEGER NOT NULL CHECK(playback_preference BETWEEN -10 AND 10),
+            playback_preference INTEGER NOT NULL CHECK(playback_preference BETWEEN -10 AND 15),
             updated_at REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS mymusic_preference_export_changes(
@@ -1452,6 +1452,18 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
                     SELECT home_track_id, playback_preference, exported_at FROM mymusic_preferences
                     """)
                 try rebuildPlaybackSummariesStatements()
+            }
+            if startingSchemaVersion < 15 {
+                try execute("""
+                CREATE TABLE track_preferences_expanded(home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE, playback_preference INTEGER NOT NULL CHECK(playback_preference BETWEEN -10 AND 15), updated_at REAL NOT NULL);
+                INSERT INTO track_preferences_expanded(home_track_id, playback_preference, updated_at) SELECT home_track_id, playback_preference, updated_at FROM track_preferences;
+                DROP TABLE track_preferences;
+                ALTER TABLE track_preferences_expanded RENAME TO track_preferences;
+                CREATE TABLE mymusic_preferences_expanded(home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE, mymusic_track_id TEXT NOT NULL UNIQUE, playback_preference INTEGER NOT NULL CHECK(playback_preference BETWEEN -10 AND 15), favorite INTEGER NOT NULL CHECK(favorite IN (0, 1)), exported_at REAL NOT NULL);
+                INSERT INTO mymusic_preferences_expanded(home_track_id, mymusic_track_id, playback_preference, favorite, exported_at) SELECT home_track_id, mymusic_track_id, playback_preference, favorite, exported_at FROM mymusic_preferences;
+                DROP TABLE mymusic_preferences;
+                ALTER TABLE mymusic_preferences_expanded RENAME TO mymusic_preferences;
+                """)
             }
             try execute("CREATE INDEX IF NOT EXISTS idx_tracks_audio_fingerprint ON tracks(audio_fingerprint)")
             try execute("CREATE INDEX IF NOT EXISTS idx_mymusic_events_track ON mymusic_playback_events(mymusic_track_id, played_at)")

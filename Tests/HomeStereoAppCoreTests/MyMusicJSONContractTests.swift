@@ -36,7 +36,7 @@ final class MyMusicJSONContractTests: XCTestCase {
         let imported = try MyMusicJSONImportService().importPreferences(data)
         XCTAssertEqual(imported.tracks.map(\.trackID), [trackID, otherTrackID])
 
-        let invalidTail = Data(#"{"schemaVersion":2,"exportedAt":"2026-09-25T12:34:56Z","tracks":[{"trackId":"d522d30b-37cd-4d4a-87a6-f2ac304f8865","playbackPreference":4,"favorite":true},{"trackId":"3f629203-cbe1-4c32-a39c-aa15ce7ea777","playbackPreference":11,"favorite":false}]}"#.utf8)
+        let invalidTail = Data(#"{"schemaVersion":2,"exportedAt":"2026-09-25T12:34:56Z","tracks":[{"trackId":"d522d30b-37cd-4d4a-87a6-f2ac304f8865","playbackPreference":4,"favorite":true},{"trackId":"3f629203-cbe1-4c32-a39c-aa15ce7ea777","playbackPreference":16,"favorite":false}]}"#.utf8)
         XCTAssertThrowsError(try MyMusicJSONImportService().importPreferences(invalidTail))
     }
 

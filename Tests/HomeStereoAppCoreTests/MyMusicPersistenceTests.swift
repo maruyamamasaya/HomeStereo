@@ -209,6 +209,32 @@ final class MyMusicPersistenceTests: XCTestCase {
         XCTAssertEqual(exact.result.items.first?.homeStereoTrackID, second.id)
     }
 
+    func testExpandedPreferencesSurviveRepeatedImportAndExport() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let track = fixture.track(relativePath: "one.flac", title: "One", artist: "A", album: "Album")
+        let externalID = UUID()
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        try await fixture.insert([track], into: repository)
+        try await repository.saveMyMusicTrackLinks([fixture.link(home: track, externalID: externalID)])
+        let service = MyMusicPersistenceService(repository: repository)
+        for value in [-10, 0, 10, 11, 15] {
+            var data = try MyMusicJSONExportService().exportPreferences([
+                MyMusicPreferenceRecord(trackID: externalID, playbackPreference: value, favorite: true)
+            ], exportedAt: Date(timeIntervalSince1970: 100))
+            for _ in 0..<4 {
+                _ = try await service.importPreferences(data)
+                let local = try await repository.loadTrackPreferences()
+                XCTAssertEqual(local.first?.playbackPreference, value)
+                let records = try await repository.loadMyMusicPreferences().map {
+                    MyMusicPreferenceRecord(trackID: $0.myMusicTrackID, playbackPreference: $0.playbackPreference, favorite: $0.favorite)
+                }
+                data = try MyMusicJSONExportService().exportPreferences(records, exportedAt: Date(timeIntervalSince1970: 100))
+                XCTAssertEqual(try MyMusicJSONImportService().importPreferences(data).tracks.first?.playbackPreference, value)
+            }
+        }
+    }
+
     func testPreferencesMergeKeepsOmittedValuesAndReportsUnknownTrack() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -454,7 +480,7 @@ final class MyMusicPersistenceTests: XCTestCase {
         try await repository.saveMyMusicTrackLinks([fixture.link(home: track, externalID: externalID)])
         let invalid = Data("""
             {"schemaVersion":2,"exportedAt":"2026-09-25T12:34:56Z","tracks":[
-              {"trackId":"\(externalID.uuidString)","playbackPreference":11,"favorite":true}
+              {"trackId":"\(externalID.uuidString)","playbackPreference":16,"favorite":true}
             ]}
             """.utf8)
         do {

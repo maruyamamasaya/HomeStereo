@@ -28,11 +28,11 @@ struct MenuBarPlaybackView: View {
         Divider()
         if let track = queue.nowPlayingTrack {
             let value = preferences.preference(for: track.id)
-            Text("評価: \(value > 0 ? "+" : "")\(value)（−10〜+10）")
+            Text("評価: \(value > 0 ? "+" : "")\(value)（−10〜+15）")
             Button("Good (+1)", systemImage: value > 0 ? "hand.thumbsup.fill" : "hand.thumbsup") {
                 Task { await preferences.adjustPreference(trackID: track.id, delta: 1) }
             }
-            .disabled(value >= 10)
+            .disabled(value >= 15)
             Button("Bad (−1)", systemImage: value < 0 ? "hand.thumbsdown.fill" : "hand.thumbsdown") {
                 Task { await preferences.adjustPreference(trackID: track.id, delta: -1) }
             }
@@ -198,8 +198,8 @@ struct TrackPreferenceControls: View {
                 }
         }
         .buttonStyle(.plain)
-        .disabled(isGood ? value >= 10 : value <= -10)
-        .help("\(isGood ? "Good +1" : "Bad −1")（現在 \(value)、−10〜+10）")
+        .disabled(isGood ? value >= 15 : value <= -10)
+        .help("\(isGood ? "Good +1" : "Bad −1")（現在 \(value)、−10〜+15）")
         .accessibilityLabel("\(track.title)の\(isGood ? "Good評価を1増やす" : "Bad評価を1減らす")")
         .accessibilityValue("現在 \(value)、−10から+10")
     }

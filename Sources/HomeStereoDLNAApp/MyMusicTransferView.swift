@@ -528,7 +528,7 @@ struct MyMusicJSONEditorView: View {
     private func fieldLabel(_ path: String) -> String {
         let key = path.split(separator: ".").last.map(String.init) ?? path
         return ["trackID": "MyMusic Track ID", "title": "曲名", "artist": "アーティスト", "album": "アルバム",
-                "playbackPreference": "Good / Bad 評価（−10〜＋10）", "favorite": "お気に入り",
+                "playbackPreference": "Good / Bad 評価（−10〜＋15）", "favorite": "お気に入り",
                 "vocal": "ボーカルスコア", "instrumental": "インストスコア", "energy": "エネルギー",
                 "duration": "曲長（秒）", "fileSize": "ファイルサイズ（bytes）", "relativePath": "音源の相対パス",
                 "analysisVersion": "解析版", "analyzedAt": "解析日時", "integratedLoudness": "統合ラウドネス" ][key] ?? key

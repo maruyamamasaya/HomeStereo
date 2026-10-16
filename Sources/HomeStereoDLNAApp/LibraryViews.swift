@@ -616,10 +616,10 @@ private struct SongsTable: View {
                 )
             }
             .buttonStyle(.plain)
-            .disabled(value >= 10)
-            .help(value >= 10 ? "Good評価は上限の+10です" : "Good評価を1増やす（現在 \(value)）")
+            .disabled(value >= 15)
+            .help(value >= 15 ? "Good評価は上限の+15です" : "Good評価を1増やす（現在 \(value)）")
             .accessibilityLabel("\(track.title)のGood評価を1増やす")
-            .accessibilityValue("現在 \(value)、上限 10")
+            .accessibilityValue("現在 \(value)、上限 15")
 
             Button {
                 Task { await preferences.adjustPreference(trackID: track.id, delta: -1) }

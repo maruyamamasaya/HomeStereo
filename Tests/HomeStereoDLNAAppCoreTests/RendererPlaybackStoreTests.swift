@@ -1842,3 +1842,16 @@ private struct QueueSeededGenerator: RandomNumberGenerator {
     #expect(queue.items.map(\.trackID) == [tracks[1].id, tracks[2].id])
     playback.shutdown(); library.pauseMonitoring()
 }
+
+
+@Test func goodAboveTenKeepsSameCandidateSelection() {
+    let ids = (0..<120).map { _ in UUID() }
+    for value in 11...15 {
+        var baseline = QueueSeededGenerator()
+        var expanded = QueueSeededGenerator()
+        let ten = Dictionary(uniqueKeysWithValues: ids.prefix(20).map { ($0, 10) })
+        let higher = Dictionary(uniqueKeysWithValues: ids.prefix(20).map { ($0, value) })
+        #expect(QueueCandidateSelection.select(ids, preferences: ten, limit: 100, using: &baseline)
+            == QueueCandidateSelection.select(ids, preferences: higher, limit: 100, using: &expanded))
+    }
+}

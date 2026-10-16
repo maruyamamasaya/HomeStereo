@@ -39,3 +39,5 @@ Importは文書全体を検証してからID、相対path、size/duration、meta
 `StateBackupTests`はtemp保存先でJSON往復、pending、次回起動適用、repository再openを通し、代表10テーブルの全field、Playlist item ID/曲順/重複参照/tags、評価、詳細event、link、累計、fingerprint、feature/音量原本bytes、settings、Import原本の一致を確認する。破損DBとpath traversalがpendingを作らないことも確認する。
 
 旧v1 fixture往復と`LegacyBackupResolutionTests`で既存tags/連携ID保持を確認する。これらは実データ/別Macの権限/大容量の操作確認の代用ではない。
+
+2026-10-16: 現行SQLite schemaはv15。保存状態backup v2はDB v14も受理し、宣言と実DBの一致・integrity・外部キーを検証してpendingへ保存する。起動時復元後のrepository openでv15へ移行する。backup JSON v1のmerge経路は維持する。

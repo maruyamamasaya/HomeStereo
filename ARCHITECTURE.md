@@ -96,7 +96,7 @@ Albumの表示identityはtitleのみで構成し、Track Artist／Album Artist�
 
 メインウィンドウ右上toolbarはパネル開閉を中心とし、各ページの実行操作は本文ヘッダー／関連セクションへ置く。Backup、Library、Album、Artist、Listening、Playlist、Genre Preset、MyMusic Status、Renderer、Now Playingの操作はページ内へ配置する。
 
-AnalyticsSnapshotのrecentEventsは直近500件を維持し、historyDaysは全詳細イベントを保持する。カレンダーは日／週の半開区間で表示し、評価は−10〜＋10と未設定を別々に選択する。完走・スキップ専用ページは詳細イベント由来の率と分母を表示する。特徴量のVoice分類はFeatureVoiceCategoryのスコア比較による表示上の目安で、判定保留／未解析を分離する。
+AnalyticsSnapshotのrecentEventsは直近500件を維持し、historyDaysは全詳細イベントを保持する。カレンダーは日／週の半開区間で表示し、評価は−10〜＋15と未設定を別々に選択し、未設定はOptionalのnilで表す。完走・スキップ専用ページは詳細イベント由来の率と分母を表示する。特徴量のVoice分類はFeatureVoiceCategoryのスコア比較による表示上の目安で、判定保留／未解析を分離する。
 
 特徴量の緑チェックはローカル曲照合とCanonical ID照合を分ける。Canonical IDはMyMusic linkが両方向で一意のときだけ一致表示する。MyMusic連携はTrackFeatureStoreの既存JSON出力を再利用する。JSON加工ツールは特徴量snapshot／Analyzer文書をFeatureCodecで読み込み・保存時検証し、編集結果をファイルだけへ書く。SQLiteや特徴量archiveへ自動適用しない。
 
@@ -120,3 +120,8 @@ AnalyticsPeriodが端末Calendarで半開期間を作り、AnalyticsService.make
 ## 保存状態backupの起動境界
 
 StateBackupServiceはSQLite backup APIと既存JSON/原本folderからStateBackupPayloadを生成する。BackupStoreはv1 mergeとv2 state restoreを分け、v2をpendingへ準備する。App initはrepository open前にpendingを再検証・適用し、旧rootを退避する。DB schemaとMyMusic wireは変えない。契約・対象範囲は[JSON backup](docs/json-backup.md)。
+
+
+## 評価範囲と選曲効果（2026-10-16）
+
+TrackPreferenceは-10〜15を保持する。選曲はQueueCandidateSelectionの既存0〜10制限を維持する。SQLite schema v15はtrack_preferencesとmymusic_preferencesをtransaction内で再構築し、他の参照・未送信tokenを保持する。StateBackupServiceはpayload宣言と実DBのversionを照合し、旧v14の保存状態backupを復元してからrepository起動時にv15へ移行する。JSON field/schemaVersionは維持し、旧受信側へ11以上を渡す互換性はない。

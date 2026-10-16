@@ -72,7 +72,7 @@ public final class StateBackupService: @unchecked Sendable {
     }
 
     public func validate(_ payload: StateBackupPayload) throws {
-        guard payload.databaseSchemaVersion == SQLiteLibraryRepository.currentSchemaVersion,
+        guard (14...SQLiteLibraryRepository.currentSchemaVersion).contains(payload.databaseSchemaVersion),
               Set(payload.files.map(\.path)).count == payload.files.count,
               payload.files.contains(where: { $0.path == "Library.sqlite3" }) else {
             throw BackupContractError.invalidStructure("保存状態のschemaまたはファイル一覧が不正です")
@@ -91,7 +91,7 @@ public final class StateBackupService: @unchecked Sendable {
         for file in payload.files where file.path == "Library.sqlite3" || file.path == "track-features.json" {
             try file.data.write(to: temporary.appendingPathComponent(file.path))
         }
-        try checkDatabase(temporary.appendingPathComponent("Library.sqlite3"))
+        try checkDatabase(temporary.appendingPathComponent("Library.sqlite3"), expectedVersion: payload.databaseSchemaVersion)
         if payload.files.contains(where: { $0.path == "track-features.json" }) {
             // Full model/version validation, in addition to the checksum.
             let object = try JSONSerialization.jsonObject(with: Data(contentsOf: temporary.appendingPathComponent("track-features.json"))) as? [String: Any]
@@ -165,7 +165,7 @@ public final class StateBackupService: @unchecked Sendable {
         let finished = sqlite3_backup_finish(backup)
         guard result == SQLITE_DONE, finished == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }
     }
-    private func checkDatabase(_ url: URL) throws {
+    private func checkDatabase(_ url: URL, expectedVersion: Int) throws {
         var database: OpaquePointer?
         guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(database); throw CocoaError(.fileReadCorruptFile) }
         defer { sqlite3_close(database) }
@@ -177,7 +177,7 @@ public final class StateBackupService: @unchecked Sendable {
             if sql.contains("integrity") {
                 guard result == SQLITE_ROW, let value = sqlite3_column_text(statement, 0), String(cString: value) == "ok" else { throw CocoaError(.fileReadCorruptFile) }
             } else if sql.contains("user_version") {
-                guard result == SQLITE_ROW, sqlite3_column_int(statement, 0) == SQLiteLibraryRepository.currentSchemaVersion else { throw CocoaError(.fileReadCorruptFile) }
+                guard result == SQLITE_ROW, sqlite3_column_int(statement, 0) == expectedVersion else { throw CocoaError(.fileReadCorruptFile) }
             } else { guard result == SQLITE_DONE else { throw CocoaError(.fileReadCorruptFile) } }
         }
     }

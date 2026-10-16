@@ -5,6 +5,14 @@ import XCTest
 
 final class StateBackupTests: XCTestCase {
     func testJSONRoundTripRestoresExactIDsOrderTagsEventsLinksAndSettingsAfterStartup() async throws {
+        try await verifyRoundTrip(legacy: false)
+    }
+
+    func testV14BackupRestoresAllRowsAndMigratesBothPreferenceTables() async throws {
+        try await verifyRoundTrip(legacy: true)
+    }
+
+    private func verifyRoundTrip(legacy: Bool) async throws {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let root = base.appendingPathComponent("HomeStereo")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -38,6 +46,10 @@ final class StateBackupTests: XCTestCase {
         INSERT INTO playback_track_summaries(home_track_id,play_count,total_playback_duration) VALUES('\(id)',4,182);
         INSERT INTO mymusic_library_play_counts(mymusic_track_id,play_count,imported_at) VALUES('\(external)',12,100);
         """)
+        try sql(database, """
+            INSERT INTO mymusic_preferences VALUES('\(id)','\(external)',7,1,123);
+            INSERT OR REPLACE INTO mymusic_preference_export_changes VALUES('\(id)','stable-token',123);
+            """)
         let analyzerData = Data("""
         {"schemaVersion":1,"analysisVersion":2,"generatedAt":"2026-09-01T12:00:00Z","tracks":[{"relativePath":"song.flac","fileSize":42,"duration":60,"features":{"calm":0.7,"integratedLUFS":-15,"truePeakDBTP":-2,"normalizationGainDB":0}}]}
         """.utf8)
@@ -54,7 +66,29 @@ final class StateBackupTests: XCTestCase {
         let document = HomeStereoBackup(exportedAt: .now, appVersion: "test", playlists: [], favorites: [], playbackEvents: [],
                                        settings: .init(automaticLibraryUpdates: false), state: snapshot, schemaVersion: 2)
         let decoded = try BackupCodec.decode(BackupCodec.encode(document))
-        let payload = try XCTUnwrap(decoded.state)
+        let currentPayload = try XCTUnwrap(decoded.state)
+        let payload: StateBackupPayload
+        if legacy {
+            let legacyDB = base.appendingPathComponent("legacy.sqlite3")
+            try XCTUnwrap(currentPayload.files.first { $0.path == "Library.sqlite3" }).data.write(to: legacyDB)
+            // Recreate the actual v14 CHECK constraints in the old backup fixture.
+            try sql(legacyDB, """
+                BEGIN;
+                CREATE TABLE track_preferences_old(home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE, playback_preference INTEGER NOT NULL CHECK(playback_preference BETWEEN -10 AND 10), updated_at REAL NOT NULL);
+                INSERT INTO track_preferences_old SELECT * FROM track_preferences;
+                DROP TABLE track_preferences;
+                ALTER TABLE track_preferences_old RENAME TO track_preferences;
+                CREATE TABLE mymusic_preferences_old(home_track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE, mymusic_track_id TEXT NOT NULL UNIQUE, playback_preference INTEGER NOT NULL CHECK(playback_preference BETWEEN -10 AND 10), favorite INTEGER NOT NULL CHECK(favorite IN (0,1)), exported_at REAL NOT NULL);
+                INSERT INTO mymusic_preferences_old SELECT * FROM mymusic_preferences;
+                DROP TABLE mymusic_preferences;
+                ALTER TABLE mymusic_preferences_old RENAME TO mymusic_preferences;
+                PRAGMA user_version = 14;
+                COMMIT;
+                """)
+            payload = StateBackupPayload(databaseSchemaVersion: 14, files: try currentPayload.files.map {
+                $0.path == "Library.sqlite3" ? .init(path: $0.path, data: try Data(contentsOf: legacyDB)) : $0
+            }, settings: currentPayload.settings)
+        } else { payload = currentPayload }
         let before = try rows(database)
         try sql(database, "DELETE FROM playlists; DELETE FROM track_preferences; DELETE FROM mymusic_playback_events;")
         defaults.set(false, forKey: "audio.normalization.enabled")
@@ -65,6 +99,10 @@ final class StateBackupTests: XCTestCase {
         XCTAssertFalse(try service.applyPendingRestore())
         XCTAssertEqual(try rows(database), before)
         let reopened = try SQLiteLibraryRepository(databaseURL: database)
+        XCTAssertEqual(try rows(database), before)
+        try sql(database, "UPDATE track_preferences SET playback_preference=15; UPDATE mymusic_preferences SET playback_preference=15;")
+        XCTAssertThrowsError(try sql(database, "UPDATE track_preferences SET playback_preference=16"))
+        XCTAssertThrowsError(try sql(database, "UPDATE mymusic_preferences SET playback_preference=-11"))
         let restored = try await reopened.loadPlaylists()
         XCTAssertEqual(restored, [playlist])
         XCTAssertEqual(defaults.bool(forKey: "audio.normalization.enabled"), true)
@@ -100,7 +138,7 @@ final class StateBackupTests: XCTestCase {
         guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }
         defer { sqlite3_close(db) }
         var result: [[String]] = []
-        for table in ["tracks", "playlists", "playlist_items", "favorites", "playback_events", "track_preferences", "mymusic_track_links", "mymusic_playback_events", "playback_track_summaries", "mymusic_library_play_counts"] {
+        for table in ["mymusic_preferences", "mymusic_preference_export_changes", "tracks", "playlists", "playlist_items", "favorites", "playback_events", "track_preferences", "mymusic_track_links", "mymusic_playback_events", "playback_track_summaries", "mymusic_library_play_counts"] {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, "SELECT * FROM \(table) ORDER BY 1,2", -1, &statement, nil) == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }
             defer { sqlite3_finalize(statement) }
