@@ -175,6 +175,25 @@ public struct MyMusicPlaybackEventsPersistenceResult: Equatable, Sendable {
     public let unresolvedTrackIDs: [UUID]
 }
 
+public struct MyMusicPreferenceImportState: Equatable, Sendable {
+    public let trackID: UUID
+    public let homeTrackID: Track.ID
+    public let playbackPreference: Int
+    public let favorite: Bool
+}
+
+public struct MyMusicPreferenceImportSnapshot: Equatable, Sendable {
+    public let trackIDs: Set<UUID>
+    public let states: [MyMusicPreferenceImportState]
+}
+
+public enum MyMusicPreferenceImportError: LocalizedError {
+    case stateChanged
+    public var errorDescription: String? {
+        "確認後に評価・ハートまたは曲の照合状態が変わりました。JSONを選び直して最新の差分を確認してください。"
+    }
+}
+
 public protocol MyMusicPersisting: Sendable {
     func loadMyMusicMatchContext() async throws -> (tracks: [Track], links: [MyMusicTrackLink])
     func applyMyMusicLibrarySnapshot(
@@ -184,8 +203,9 @@ public protocol MyMusicPersisting: Sendable {
     func loadMyMusicTrackLinks() async throws -> [MyMusicTrackLink]
     func loadMyMusicPlayCounts() async throws -> [PersistedMyMusicPlayCount]
     func mergeMyMusicPreferences(
-        _ preferences: [MyMusicPreferenceRecord], exportedAt: Date
+        _ preferences: [MyMusicPreferenceRecord], exportedAt: Date, expectedSnapshot: MyMusicPreferenceImportSnapshot?
     ) async throws -> MyMusicPreferencesPersistenceResult
+    func loadMyMusicPreferenceImportSnapshot(trackIDs: Set<UUID>) async throws -> MyMusicPreferenceImportSnapshot
     func loadMyMusicPreferences() async throws -> [PersistedMyMusicPreference]
     func loadCurrentMyMusicPreferenceRecords() async throws -> [MyMusicPreferenceRecord]
     func loadPendingMyMusicPreferenceExports() async throws -> [PendingMyMusicPreferenceExport]
@@ -211,5 +231,12 @@ public struct MyMusicPlaybackEventsExportResult: Equatable, Sendable {
 
     public init(data: Data, exported: Int, unresolved: Int) {
         self.data = data; self.exported = exported; self.unresolved = unresolved
+    }
+}
+
+
+public extension MyMusicPersisting {
+    func mergeMyMusicPreferences(_ preferences: [MyMusicPreferenceRecord], exportedAt: Date) async throws -> MyMusicPreferencesPersistenceResult {
+        try await mergeMyMusicPreferences(preferences, exportedAt: exportedAt, expectedSnapshot: nil)
     }
 }

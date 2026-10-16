@@ -5,6 +5,110 @@ import XCTest
 
 @MainActor
 final class MyMusicTransferStoreTests: XCTestCase {
+    func testPreferenceDiffIncludesCurrentIncomingUnknownAndDoesNotWriteOnCancel() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let track = try await fixture.insertTrack(repository: repository)
+        let externalID = UUID(), missing = UUID()
+        try await repository.saveMyMusicTrackLinks([fixture.link(track, externalID: externalID)])
+        try await repository.saveTrackPreference(TrackPreference(trackID: track.id, playbackPreference: 11))
+        let data = try MyMusicJSONExportService().exportPreferences([
+            MyMusicPreferenceRecord(trackID: externalID, playbackPreference: 15, favorite: true),
+            MyMusicPreferenceRecord(trackID: missing, playbackPreference: -10, favorite: false)
+        ], exportedAt: fixture.now)
+        let before = try await repository.loadPendingMyMusicPreferenceExports()
+        let store = MyMusicTransferStore(repository: repository, files: FakeMyMusicFiles())
+        await store.prepareImport(.preferences, data: data)
+        let preview = try XCTUnwrap(store.preview)
+        XCTAssertEqual(preview.pendingUpdates, 1)
+        XCTAssertEqual(preview.unresolved, 1)
+        let change = try XCTUnwrap(preview.details.first?.preferenceChange)
+        XCTAssertEqual(change.current?.playbackPreference, 11)
+        XCTAssertEqual(change.current?.favorite, false)
+        XCTAssertEqual(change.incoming.playbackPreference, 15)
+        XCTAssertTrue(change.incoming.favorite)
+        XCTAssertNil(preview.details.last?.preferenceChange?.current)
+        store.cancelImport()
+        let after = try await repository.loadPendingMyMusicPreferenceExports()
+        XCTAssertEqual(after, before)
+        let local = try await repository.loadTrackPreferences()
+        XCTAssertEqual(local.first?.playbackPreference, 11)
+        let imported = try await repository.loadMyMusicPreferences()
+        XCTAssertTrue(imported.isEmpty)
+    }
+
+    func testPreferenceApplyRejectsChangedRatingOrHeartAndPreservesDirtyState() async throws {
+        for changeHeart in [false, true] {
+            let fixture = try TransferFixture()
+            defer { fixture.cleanup() }
+            let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+            let track = try await fixture.insertTrack(repository: repository)
+            let externalID = UUID()
+            try await repository.saveMyMusicTrackLinks([fixture.link(track, externalID: externalID)])
+            let data = try MyMusicJSONExportService().exportPreferences([
+                MyMusicPreferenceRecord(trackID: externalID, playbackPreference: 15, favorite: false)
+            ], exportedAt: fixture.now)
+            let store = MyMusicTransferStore(repository: repository, files: FakeMyMusicFiles())
+            await store.prepareImport(.preferences, data: data)
+            if changeHeart { try await repository.saveFavorite(Favorite(trackID: track.id)) }
+            else { try await repository.saveTrackPreference(TrackPreference(trackID: track.id, playbackPreference: 9)) }
+            let pending = try await repository.loadPendingMyMusicPreferenceExports()
+            await store.applyImport()
+            XCTAssertEqual(store.state, .failed)
+            XCTAssertTrue(store.errorMessage?.contains("確認後") == true)
+            let after = try await repository.loadPendingMyMusicPreferenceExports()
+            XCTAssertEqual(after, pending)
+            let imported = try await repository.loadMyMusicPreferences()
+            XCTAssertTrue(imported.isEmpty)
+        }
+    }
+
+    func testPreferenceApplyRejectsNewMappingAfterPreview() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let track = try await fixture.insertTrack(repository: repository)
+        let externalID = UUID()
+        let data = try MyMusicJSONExportService().exportPreferences([
+            MyMusicPreferenceRecord(trackID: externalID, playbackPreference: 15, favorite: true)
+        ], exportedAt: fixture.now)
+        let service = MyMusicTransferService(repository: repository)
+        let preview = try await service.preview(data, as: .preferences)
+        XCTAssertEqual(preview.unresolved, 1)
+        try await repository.saveMyMusicTrackLinks([fixture.link(track, externalID: externalID)])
+        do {
+            try await service.apply(data, as: .preferences, expectedPreferences: preview.preferenceSnapshot)
+            XCTFail("Expected mapping change rejection")
+        } catch is MyMusicPreferenceImportError { }
+        let imported = try await repository.loadMyMusicPreferences()
+        XCTAssertTrue(imported.isEmpty)
+    }
+
+    func testPreferencePreviewIncludesChangesAfterHundredRowsAndApplyMatchesPreview() async throws {
+        let fixture = try TransferFixture()
+        defer { fixture.cleanup() }
+        let repository = try SQLiteLibraryRepository(databaseURL: fixture.database)
+        let track = try await fixture.insertTrack(repository: repository)
+        let externalID = UUID()
+        try await repository.saveMyMusicTrackLinks([fixture.link(track, externalID: externalID)])
+        var incoming = (0..<101).map { _ in MyMusicPreferenceRecord(trackID: UUID(), playbackPreference: 0, favorite: false) }
+        incoming.append(MyMusicPreferenceRecord(trackID: externalID, playbackPreference: 15, favorite: true))
+        let data = try MyMusicJSONExportService().exportPreferences(incoming, exportedAt: fixture.now)
+        let service = MyMusicTransferService(repository: repository)
+        let preview = try await service.preview(data, as: .preferences)
+        XCTAssertEqual(preview.details.count, 102)
+        XCTAssertEqual(preview.pendingUpdates, 1)
+        XCTAssertEqual(preview.unresolved, 101)
+        try await service.apply(data, as: .preferences, expectedPreferences: preview.preferenceSnapshot)
+        let repeated = try await service.preview(data, as: .preferences)
+        XCTAssertEqual(repeated.unchanged, 1)
+        XCTAssertEqual(repeated.pendingUpdates, 0)
+        let change = try XCTUnwrap(repeated.details.last?.preferenceChange)
+        XCTAssertEqual(change.current?.playbackPreference, 15)
+        XCTAssertEqual(change.current?.favorite, true)
+    }
+
     func testAllDocumentKindsCreatePreviewWithoutWriting() async throws {
         let fixture = try TransferFixture()
         defer { fixture.cleanup() }

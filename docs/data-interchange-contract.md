@@ -1,7 +1,7 @@
 # MyMusic / HomeStereo データ交換・保全契約
 
 契約ID: `mymusic-homestereo-interchange`
-文書revision: 4 / 更新日: 2026-10-16
+文書revision: 5 / 更新日: 2026-10-16
 状態: 共通設計方針。既存wire形式を変更しない。未実装の保全要件は下記に区別する。
 
 ## 目的と責務
@@ -35,6 +35,14 @@ Features・音量解析・ジャンルプリセット等は個別の既存契約
 - 15からBadを押すと14となり、9で初めて選曲weightが下がる。評価別表示・評価順では生の値を使う。両端末のクリック数を加算する契約ではない。
 - HomeStereoはDB schema v15で評価2テーブルのCHECK制約をtransaction内で移行し、ID・値・日時・Favorite・未送信tokenを維持する。保存状態backup v2のDB schema v14とv15を受け付け、旧v14は復元後のrepository openで移行する。未知の将来schemaは拒否する。
 - MyMusicの保存／backup形式は維持する。旧backupを新アプリで読む互換性と、新しい15を含むbackupを旧アプリで読む互換性は異なり、後者は保証しない。
+
+## Preferences差分Preview Beta（2026-10-16）
+
+- 両アプリの手動Preferences Importは、受信値と現在の評価・ハートの差分を確認してから適用する。変更なしは任意表示、未照合は現在値を推測せず「適用しない」と表示する。Preview／キャンセルは保存しない。
+- Preview対象の曲が確認後に再編集・再照合された場合は、そのまま上書きせず最新のPreviewを求める。HomeStereoはSQLite transaction内で対象Track IDの現在値・対応するローカルIDを再照合してから適用し、拒否時に未送信tokenを解除しない。対象外の曲の編集は保持する。
+- MyMusicは適用前に対象曲の現在値とLibrary所属を確認し、先行保存を待つ。保存中は追加の評価変更／重複Importを抑止し、保存成功後だけmemoryへ反映する。
+- 同曲の複数端末編集を自動mergeする機能、原本／更新前Preferenceの耐久保管、相手の受領確認は今回の対象外。差分Previewの存在だけでDI-005／DI-007全体の完了とはしない。
+- JSON schema v2とDB schema v15は変更しない。Preferencesの変更明細は100件で打ち切らず、変更なしを畳んで全対象を確認できる。
 
 ## 保全要件（実装の達成確認が必要）
 

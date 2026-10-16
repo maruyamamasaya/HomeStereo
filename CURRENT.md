@@ -247,3 +247,8 @@ MyMusic側もplaylistIDを保持して再Importで複製を作らない。既に
 
 
 2026-10-16: 評価-10〜15・選曲効果10で最大、SQLite v15／旧v14保存状態backup互換を含む作業ツリーを専用scriptでRelease buildし、/Applications/HomeStereo.appへ正式配置・起動成功。build 20261016185415、jp.local.HomeStereo.Beta。署名・実行ファイルhash一致と起動processを確認。豪華なGood演出はMyMusicのみ。実ユーザーデータの復元操作は未実施。詳細はsessions/2026-10-16-preference-effects-deploy.md。
+
+
+## Preferences差分Preview Beta（2026-10-16）
+
+評価JSONの読み込み前に、曲ごとの評価とハートの「現在→読み込み後」を確認できる。更新予定・変更なし・未照合の件数を表示し、変更なしは任意表示。未照合は適用しない。Preview／キャンセルは保存せず、確認後に対象曲の評価／ハートや照合状態が変わった場合は再確認を要求する。HomeStereoはtransaction内で再照合し、拒否時に未送信情報を保持。JSON／DB形式は変更しない。VesperaへのDebug build・install・launch、HomeStereo正式配置・起動（build 20261016214812）は成功。実機での差分画面の目視・実ユーザーJSON往復は未確認。詳細はsessions/2026-10-16-preference-import-preview.md。

@@ -20,6 +20,12 @@ public struct MyMusicImportPreviewDetail: Identifiable, Equatable, Sendable {
     public let trackID: UUID
     public let result: String
     public let reason: String?
+    public var preferenceChange: MyMusicPreferenceChange? = nil
+}
+
+public struct MyMusicPreferenceChange: Equatable, Sendable {
+    public let current: MyMusicPreferenceImportState?
+    public let incoming: MyMusicPreferenceRecord
 }
 
 public struct MyMusicImportPreview: Equatable, Sendable {
@@ -44,6 +50,7 @@ public struct MyMusicImportPreview: Equatable, Sendable {
     public let updatedPlaylists: Int
     public let importedTracks: Int
     public let details: [MyMusicImportPreviewDetail]
+    public var preferenceSnapshot: MyMusicPreferenceImportSnapshot? = nil
     public var playlistSnapshot: [Playlist]? = nil
 }
 
@@ -100,10 +107,10 @@ public struct MyMusicTransferService: Sendable {
         }
     }
 
-    public func apply(_ data: Data, as kind: MyMusicDocumentKind, expectedPlaylists: [Playlist]? = nil) async throws {
+    public func apply(_ data: Data, as kind: MyMusicDocumentKind, expectedPlaylists: [Playlist]? = nil, expectedPreferences: MyMusicPreferenceImportSnapshot? = nil) async throws {
         switch kind {
         case .library: _ = try await persistence.importLibrary(data)
-        case .preferences: _ = try await persistence.importPreferences(data)
+        case .preferences: _ = try await persistence.importPreferences(data, expectedSnapshot: expectedPreferences)
         case .playbackEvents: _ = try await persistence.importPlaybackEvents(data)
         case .playlists: _ = try await persistence.importPlaylists(data, expectedPlaylists: expectedPlaylists)
         }
@@ -192,14 +199,12 @@ public struct MyMusicTransferService: Sendable {
     private func previewPreferences(_ data: Data) async throws -> MyMusicImportPreview {
         let document = try MyMusicJSONImportService().importPreferences(data)
         let context = try await repository.loadMyMusicMatchContext()
-        let existing = Dictionary(uniqueKeysWithValues: try await repository.loadCurrentMyMusicPreferenceRecords().map {
-            ($0.trackID, $0)
-        })
-        let links = Dictionary(uniqueKeysWithValues: context.links.map { ($0.myMusicTrackID, $0.homeStereoTrackID) })
+        let snapshot = try await repository.loadMyMusicPreferenceImportSnapshot(trackIDs: Set(document.tracks.map(\.trackID)))
+        let existing = Dictionary(uniqueKeysWithValues: snapshot.states.map { ($0.trackID, $0) })
         let tracks = Dictionary(uniqueKeysWithValues: context.tracks.map { ($0.id, $0) })
         var updates = 0, unchanged = 0, unresolved = 0
-        let details = document.tracks.prefix(100).map { value -> MyMusicImportPreviewDetail in
-            let homeID = links[value.trackID]
+        let details = document.tracks.map { value -> MyMusicImportPreviewDetail in
+            let homeID = existing[value.trackID]?.homeTrackID
             let track = homeID.flatMap { tracks[$0] }
             let result: String
             let reason: String?
@@ -213,17 +218,9 @@ public struct MyMusicTransferService: Sendable {
             }
             return MyMusicImportPreviewDetail(
                 id: value.trackID.uuidString, title: track?.title ?? "未解決の曲",
-                artist: track?.artist ?? "", trackID: value.trackID, result: result, reason: reason
+                artist: track?.artist ?? "", trackID: value.trackID, result: result, reason: reason,
+                preferenceChange: MyMusicPreferenceChange(current: existing[value.trackID], incoming: value)
             )
-        }
-        // Summary must cover all rows, including rows beyond the displayed first 100.
-        if document.tracks.count > details.count {
-            for value in document.tracks.dropFirst(details.count) {
-                if links[value.trackID] == nil { unresolved += 1 }
-                else if let old = existing[value.trackID],
-                        old.playbackPreference == value.playbackPreference, old.favorite == value.favorite { unchanged += 1 }
-                else { updates += 1 }
-            }
         }
         return MyMusicImportPreview(
             kind: .preferences, total: document.tracks.count, matched: 0, newlyLinked: 0,
@@ -232,7 +229,7 @@ public struct MyMusicTransferService: Sendable {
             invalid: 0, missingFromSnapshot: 0,
             pendingUpdates: updates, pendingInserts: 0, duplicates: 0, unresolved: unresolved,
             addedPlaylists: 0, updatedPlaylists: 0, importedTracks: 0,
-            details: details
+            details: details, preferenceSnapshot: snapshot
         )
     }
 

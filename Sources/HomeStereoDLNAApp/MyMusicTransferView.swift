@@ -9,6 +9,7 @@ import SwiftUI
 struct MyMusicTransferView: View {
     @Bindable var store: MyMusicTransferStore
     @Bindable var features: TrackFeatureStore
+    @State private var showsUnchangedPreferences = false
     @State private var limitsPlaybackEventRange = true
     @State private var playbackEventsStartDate = Calendar.current.date(
         byAdding: .month, value: -1, to: .now
@@ -186,6 +187,9 @@ struct MyMusicTransferView: View {
 
     @ViewBuilder
     private func previewCard(_ preview: MyMusicImportPreview) -> some View {
+        let details = preview.details.filter {
+            preview.kind != .preferences || showsUnchangedPreferences || $0.result != "unchanged"
+        }
         GroupBox {
             VStack(alignment: .leading, spacing: 14) {
                 Label("読み込み前の確認 — \(preview.kind.fileName)", systemImage: "doc.text.magnifyingglass")
@@ -199,11 +203,16 @@ struct MyMusicTransferView: View {
                             .foregroundStyle(.orange)
                     }
                 }
-                if !preview.details.isEmpty {
+                if preview.kind == .preferences {
+                    Text("評価とハートだけを受信内容へ更新します。未解決の曲は適用せず、JSONにない曲は変更しません。")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Toggle("変更なしも表示", isOn: $showsUnchangedPreferences)
+                }
+                if !details.isEmpty {
                     Divider()
-                    Text("明細（先頭\(preview.details.count)件）").font(.headline)
+                    Text(preview.kind == .preferences ? "現在 → 読み込み後（\(details.count)曲）" : "明細（先頭\(details.count)件）").font(.headline)
                     LazyVStack(spacing: 0) {
-                        ForEach(preview.details) { detail in
+                        ForEach(details) { detail in
                             HStack(alignment: .top, spacing: 12) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(detail.title).lineLimit(1)
@@ -212,7 +221,17 @@ struct MyMusicTransferView: View {
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 2) {
-                                    Text(detail.result).font(.caption.bold())
+                                    if let change = detail.preferenceChange {
+                                        if let current = change.current {
+                                            Text("評価: \(current.playbackPreference) → \(change.incoming.playbackPreference)")
+                                            Label("ハート: \(current.favorite ? "ON" : "OFF") → \(change.incoming.favorite ? "ON" : "OFF")",
+                                                  systemImage: change.incoming.favorite ? "heart.fill" : "heart")
+                                            if detail.result == "unchanged" { Text("変更なし").font(.caption) }
+                                        } else {
+                                            Text("未照合・適用しません").foregroundStyle(.orange)
+                                            Text("受信: 評価 \(change.incoming.playbackPreference)、ハート \(change.incoming.favorite ? "ON" : "OFF")")
+                                        }
+                                    } else { Text(detail.result).font(.caption.bold()) }
                                     if let reason = detail.reason {
                                         Text(reason).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                                     }

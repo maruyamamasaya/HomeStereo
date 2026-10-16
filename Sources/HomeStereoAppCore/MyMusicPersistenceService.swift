@@ -160,9 +160,9 @@ public struct MyMusicPersistenceService: Sendable {
         return match.result
     }
 
-    public func importPreferences(_ data: Data) async throws -> MyMusicPreferencesPersistenceResult {
+    public func importPreferences(_ data: Data, expectedSnapshot: MyMusicPreferenceImportSnapshot? = nil) async throws -> MyMusicPreferencesPersistenceResult {
         let document = try MyMusicJSONImportService().importPreferences(data)
-        return try await repository.mergeMyMusicPreferences(document.tracks, exportedAt: document.exportedAt)
+        return try await repository.mergeMyMusicPreferences(document.tracks, exportedAt: document.exportedAt, expectedSnapshot: expectedSnapshot)
     }
 
     public func importPlaybackEvents(_ data: Data) async throws -> MyMusicPlaybackEventsPersistenceResult {

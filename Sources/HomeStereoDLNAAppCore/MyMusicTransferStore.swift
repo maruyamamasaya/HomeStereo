@@ -214,7 +214,7 @@ public final class MyMusicTransferStore {
         let appliedPreview = preview
         state = .applying; errorMessage = nil
         do {
-            try await transfer.apply(pendingData, as: pendingKind, expectedPlaylists: appliedPreview?.playlistSnapshot)
+            try await transfer.apply(pendingData, as: pendingKind, expectedPlaylists: appliedPreview?.playlistSnapshot, expectedPreferences: appliedPreview?.preferenceSnapshot)
             await afterImportApplied(pendingKind)
             self.pendingData = nil; self.pendingKind = nil; preview = nil
             completedMessage = "\(pendingKind.fileName)を読み込みました。\(Self.resultSummary(appliedPreview))"

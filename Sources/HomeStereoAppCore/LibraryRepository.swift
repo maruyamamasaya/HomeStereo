@@ -547,11 +547,18 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
     }
 
     public func mergeMyMusicPreferences(
-        _ preferences: [MyMusicPreferenceRecord], exportedAt: Date
+        _ preferences: [MyMusicPreferenceRecord], exportedAt: Date, expectedSnapshot: MyMusicPreferenceImportSnapshot? = nil
     ) async throws -> MyMusicPreferencesPersistenceResult {
         try withLock {
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
+                if let expectedSnapshot {
+                    let ids = Set(preferences.map(\.trackID))
+                    guard expectedSnapshot.trackIDs == ids,
+                          try preferenceImportSnapshotStatement(trackIDs: ids) == expectedSnapshot else {
+                        throw MyMusicPreferenceImportError.stateChanged
+                    }
+                }
                 let links = Dictionary(uniqueKeysWithValues: try query(
                     "SELECT mymusic_track_id, home_track_id FROM mymusic_track_links"
                 ) { (UUID(uuidString: text($0, 0))!, UUID(uuidString: text($0, 1))!) })
@@ -633,6 +640,28 @@ public final class SQLiteLibraryRepository: LibraryPersisting, MyMusicPersisting
                 )
             }
         }
+    }
+
+    public func loadMyMusicPreferenceImportSnapshot(trackIDs: Set<UUID>) async throws -> MyMusicPreferenceImportSnapshot {
+        try withLock { try preferenceImportSnapshotStatement(trackIDs: trackIDs) }
+    }
+
+    private func preferenceImportSnapshotStatement(trackIDs: Set<UUID>) throws -> MyMusicPreferenceImportSnapshot {
+        let states = try query("""
+            SELECT l.mymusic_track_id, l.home_track_id,
+                   COALESCE(tp.playback_preference, p.playback_preference, 0),
+                   CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END
+            FROM mymusic_track_links l
+            LEFT JOIN track_preferences tp ON tp.home_track_id = l.home_track_id
+            LEFT JOIN favorites f ON f.track_id = l.home_track_id
+            LEFT JOIN mymusic_preferences p ON p.home_track_id = l.home_track_id
+            ORDER BY l.mymusic_track_id
+            """) {
+            MyMusicPreferenceImportState(trackID: UUID(uuidString: text($0, 0))!,
+                homeTrackID: UUID(uuidString: text($0, 1))!,
+                playbackPreference: Int(sqlite3_column_int64($0, 2)), favorite: sqlite3_column_int($0, 3) != 0)
+        }.filter { trackIDs.contains($0.trackID) }
+        return MyMusicPreferenceImportSnapshot(trackIDs: trackIDs, states: states)
     }
 
     public func loadCurrentMyMusicPreferenceRecords() async throws -> [MyMusicPreferenceRecord] {
