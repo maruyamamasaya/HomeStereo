@@ -23,6 +23,8 @@ Pythonの独立venv、checksum検証した公式モデル、code、SQLite cache�
 
 HomeStereoの専用deploy scriptはこのinstallerを先に実行する。MyMusicのvenv、解析cache、model、出力へ書き込まない。
 
+補助アプリのアイコンはHomeStereo本体のAppIcon画像を共有し、installerが全macOSサイズをICNSへまとめて設定する。
+
 ## 実行と保存境界
 
 SwiftUI → TrackFeatureStore → FeatureAnalysisPlanner → FeatureAnalysisService → NSWorkspace → HomeStereoAnalyzer → worker.py。HomeStereoのApplication Support配下`AnalysisRuns/<UUID>`にversion 1 JSON requestをatomic生成し、Launch ServicesのJSON document open eventとしてURLを渡す。shellへ音源pathを埋め込まない。helperはネットワークAPIを公開せず、生成されたrequestで指定された音源だけを読む。

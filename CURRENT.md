@@ -16,6 +16,8 @@ Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change�
 
 ## Implemented
 
+- HomeStereoAnalyzer補助アプリは本体と同じAppIconを使用する。installerがrepositoryの画像からICNSを生成し、Info.plistへ設定する。
+
 - ライブラリscan結果は「移動を確認した曲（Track IDを維持）」「確認が必要な項目」「読み込めなかった項目」を件数付きで分離する。移動成功通知を読み込み失敗として表示しない。
 
 - 分析の「ランキング」にアーティスト別再生回数／実聴時間とジャンル別再生回数を追加。アーティストは現在のジャンルプリセットを初期選択し、分析内で切替可能。上位20件／全件を比較バーで閲覧する。

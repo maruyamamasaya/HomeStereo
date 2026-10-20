@@ -8,6 +8,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import tempfile
 import urllib.request
 
 parser=argparse.ArgumentParser()
@@ -49,9 +50,19 @@ for tool in ('ffmpeg','ffprobe'):
 app=Path('/Applications/HomeStereoAnalyzer.app')
 contents=app/'Contents';(contents/'MacOS').mkdir(parents=True,exist_ok=True)
 plist={'CFBundleIdentifier':'jp.local.HomeStereo.Analyzer','CFBundleName':'HomeStereoAnalyzer','CFBundleExecutable':'HomeStereoAnalyzer','CFBundlePackageType':'APPL','CFBundleVersion':'1','CFBundleShortVersionString':'1.0','LSUIElement':True,'LSMultipleInstancesProhibited':False,'CFBundleDocumentTypes':[{'CFBundleTypeName':'HomeStereo Analysis Request','CFBundleTypeRole':'Viewer','LSHandlerRank':'None','LSItemContentTypes':['public.json']}]}
+# Reuse the product icon at every macOS size; no installed HomeStereo bundle is required.
+resources=contents/'Resources';resources.mkdir(exist_ok=True)
+icon_source=source.parent/'Sources/HomeStereoApp/Assets.xcassets/AppIcon.appiconset'
+with tempfile.TemporaryDirectory() as tmp:
+    iconset=Path(tmp)/'HomeStereoAnalyzer.iconset';iconset.mkdir()
+    for size in (16,32,128,256,512):
+        for scale in (1,2):
+            suffix='@2x' if scale==2 else ''
+            shutil.copy2(icon_source/f'AppIcon-{size}{suffix}.png',iconset/f'icon_{size}x{size}{suffix}.png')
+    subprocess.run(['iconutil','--convert','icns',str(iconset),'--output',str(resources/'HomeStereoAnalyzer.icns')],check=True)
+plist['CFBundleIconFile']='HomeStereoAnalyzer.icns'
 (contents/'Info.plist').write_bytes(plistlib.dumps(plist))
 # Launch Services requires a native executable; a shell entry may exit before receiving arguments.
-import tempfile
 launcher=contents/'MacOS/HomeStereoAnalyzer'
 def swift_string(value): return json.dumps(str(value),ensure_ascii=False)
 launcher_source = """import AppKit
