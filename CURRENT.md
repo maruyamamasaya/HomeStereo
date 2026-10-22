@@ -4,6 +4,8 @@ HomeStereoは、Mac上で選択した音源をLAN内DLNA RendererへHTTP配信�
 
 ## Current Phase
 
+2026-10-23: AppIconを深いネイビーの背景・黒いレコード盤・アイボリーのトーンアームに更新。macOS用16〜1024px全10画像を差し替えた。専用scriptでRelease build `20261023034515`を`/Applications/HomeStereo.app`へ更新・起動。署名・実行ファイルSHA-256一致・正式pathのprocess起動を確認。
+
 2026-10-22: キュー挿入線の残留対策を含む現在の作業ツリーを専用scriptでRelease buildし、`/Applications/HomeStereo.app`へ更新・起動した（build `20261022133419`）。署名、build成果物との実行ファイルSHA-256一致、正式pathからのprocess起動を確認。実UIのdrag操作確認は未実施。
 
 2026-10-22: 曲一覧の左端6操作は、アイコンの寸法・配置を維持し、透明な22×24ptのlabel全体をクリック対象にした。実画面での周辺クリック確認は未実施。
