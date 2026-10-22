@@ -92,7 +92,15 @@ public final class RendererPlaybackStore {
     @ObservationIgnored private var selectedDiscoveryMisses = 0
     @ObservationIgnored private var consecutiveTransportRefreshFailures = 0
     @ObservationIgnored private var diagnosticEvents: [PlaybackDiagnosticEvent] = []
+    @ObservationIgnored private var localPlaybackRequested = false
+    @ObservationIgnored private var lastLocalSnapshot: LocalPlaybackSnapshot?
+    @ObservationIgnored private var localProgress = LocalPlaybackProgressMonitor()
     @ObservationIgnored private var localPlayerGeneration: UUID?
+
+    /// A local Play request is still active while AVPlayer prepares or buffers.
+    public var isLocalPlaybackPending: Bool {
+        isThisMacSelected && localPlaybackRequested && playbackState == .transitioning
+    }
 
     public var selectedDevice: RendererDevice? { devices.first { $0.id == selectedDeviceID } }
     public var hasSelectedOutput: Bool { isThisMacSelected || selectedDevice != nil }
@@ -405,7 +413,7 @@ public final class RendererPlaybackStore {
         }
     }
 
-    public func togglePlayback() async { playbackState == .playing ? await pause() : await play() }
+    public func togglePlayback() async { (playbackState == .playing || isLocalPlaybackPending) ? await pause() : await play() }
 
     public func prewarmStereoMedia(fileURL: URL) async {
         guard isSonyStereoSelected else { return }
@@ -441,8 +449,11 @@ public final class RendererPlaybackStore {
                         if localDuration > 0 { self.duration = localDuration }
                     }
                     self.applyLocalNormalization()
+                    self.localPlaybackRequested = true
+                    self.localProgress = LocalPlaybackProgressMonitor()
                     self.localPlayer.play()
-                    self.setPlaybackState(.playing)
+                    self.setPlaybackState(self.localPlayer.playbackSnapshot() == nil ? .playing : .transitioning)
+                    self.observeLocalPlayback()
                     self.startPolling()
                 }
                 return
@@ -672,6 +683,8 @@ public final class RendererPlaybackStore {
         await serializeCommand { [weak self] in
             guard let self else { return }
             if self.isThisMacSelected {
+                self.localPlaybackRequested = false
+                self.localProgress = LocalPlaybackProgressMonitor()
                 self.localPlayer.pause()
                 self.setPlaybackState(.paused)
                 self.elapsed = self.localPlayer.currentTime()
@@ -745,6 +758,8 @@ public final class RendererPlaybackStore {
         await serializeCommand { [weak self] in
             guard let self else { return }
             if self.isThisMacSelected {
+                self.localPlaybackRequested = false
+                self.localProgress = LocalPlaybackProgressMonitor()
                 self.localPlayer.stop()
                 self.setPlaybackState(.stopped)
                 self.elapsed = 0
@@ -795,6 +810,7 @@ public final class RendererPlaybackStore {
         await serializeCommand { [weak self] in
             guard let self else { return }
             if self.isThisMacSelected {
+                self.localProgress = LocalPlaybackProgressMonitor()
                 self.localPlayer.seek(to: position)
                 self.elapsed = max(0, position)
                 self.lastConfirmedPosition = self.elapsed
@@ -871,6 +887,7 @@ public final class RendererPlaybackStore {
             let localDuration = localPlayer.itemDuration()
             if localDuration > 0 { duration = localDuration }
             lastConfirmedPosition = elapsed
+            observeLocalPlayback()
             onPositionChange?(elapsed)
             return
         }
@@ -998,6 +1015,8 @@ public final class RendererPlaybackStore {
     public func prepareForSystemInterruption() {
         if isThisMacSelected {
             pollingTask?.cancel()
+            localPlaybackRequested = false
+            localProgress = LocalPlaybackProgressMonitor()
             localPlayer.pause()
             elapsed = localPlayer.currentTime()
             onPositionChange?(elapsed)
@@ -1279,6 +1298,9 @@ public final class RendererPlaybackStore {
     private func beginPlaybackGeneration() {
         playbackGeneration = UUID()
         localPlayerGeneration = nil
+        localPlaybackRequested = false
+        lastLocalSnapshot = nil
+        localProgress = LocalPlaybackProgressMonitor()
         refreshSequence &+= 1
         completedGeneration = nil
         lastConfirmedPosition = 0
@@ -1286,11 +1308,37 @@ public final class RendererPlaybackStore {
         pollingTask?.cancel()
     }
 
+    private func observeLocalPlayback() {
+        guard isThisMacSelected, localPlayerGeneration == playbackGeneration,
+              let snapshot = localPlayer.playbackSnapshot() else { return }
+        if lastLocalSnapshot.map({ !snapshot.hasSameCondition(as: $0) }) ?? true {
+            appendDiagnostic(action: "LocalPlayback", outcome: "condition-changed", localPlayback: snapshot)
+            lastLocalSnapshot = snapshot
+        }
+        guard localPlaybackRequested else { return }
+        if snapshot.itemState == .failed {
+            localPlaybackFailed("音源の読み込みまたは再生に失敗しました。診断を書き出して確認してください。")
+            return
+        }
+        let state: RendererPlaybackState
+        switch snapshot.transportState {
+        case .playing: state = .playing
+        case .waiting: state = .transitioning
+        case .paused: state = snapshot.itemState == .preparing ? .transitioning : .paused
+        }
+        if playbackState != state { setPlaybackState(state) }
+        if let stalled = localProgress.update(snapshot, uptime: ProcessInfo.processInfo.systemUptime) {
+            appendDiagnostic(action: "LocalPlayback", outcome: stalled ? "position-not-advancing" : "position-resumed",
+                             localPlayback: snapshot)
+        }
+    }
+
     private func localPlaybackEnded() {
         guard isThisMacSelected,
               localPlayerGeneration == playbackGeneration,
               completedGeneration != playbackGeneration else { return }
         completedGeneration = playbackGeneration
+        localPlaybackRequested = false
         pollingTask?.cancel()
         elapsed = duration
         lastConfirmedPosition = elapsed
@@ -1301,6 +1349,10 @@ public final class RendererPlaybackStore {
 
     private func localPlaybackFailed(_ message: String) {
         guard isThisMacSelected, localPlayerGeneration == playbackGeneration else { return }
+        if let snapshot = localPlayer.playbackSnapshot() {
+            appendDiagnostic(action: "LocalPlayback", outcome: "failure", localPlayback: snapshot)
+        }
+        localPlaybackRequested = false
         pollingTask?.cancel()
         setPlaybackState(.stopped)
         lastError = PlaybackDiagnostic(action: "このMacで再生", details: message)
@@ -1397,13 +1449,14 @@ public final class RendererPlaybackStore {
         }
     }
 
-    private func appendDiagnostic(action: String, outcome: String, httpStatus: Int? = nil, upnpErrorCode: Int? = nil) {
+    private func appendDiagnostic(action: String, outcome: String, httpStatus: Int? = nil, upnpErrorCode: Int? = nil, localPlayback: LocalPlaybackSnapshot? = nil) {
         diagnosticEvents.append(PlaybackDiagnosticEvent(
             generationID: playbackGeneration,
             action: action,
             outcome: outcome,
             httpStatus: httpStatus,
-            upnpErrorCode: upnpErrorCode
+            upnpErrorCode: upnpErrorCode,
+            localPlayback: localPlayback
         ))
         if diagnosticEvents.count > 200 { diagnosticEvents.removeFirst(diagnosticEvents.count - 200) }
     }

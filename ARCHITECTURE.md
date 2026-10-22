@@ -130,3 +130,31 @@ TrackPreferenceは-10〜15を保持する。選曲はQueueCandidateSelectionの�
 ## Preferences差分Preview（2026-10-16）
 
 Preferences Importでは受信JSONを検証後、対象曲の現在の評価／Favoriteと照合状態を値snapshotにして表示する。未照合と未評価0を区別し、変更明細を全件保持する。確認後の変更はsnapshotと再比較して適用を拒否する。MyMusicはTrackPreferenceStoreが準備／適用を担い、専用sheetは表示と確認に限定する。HomeStereoはMyMusicTransferServiceが差分と対象snapshotを生成し、Repositoryがmerge transaction冒頭で同一snapshotを読み直す。保存失敗や不一致はmemory／未送信tokenへ成功反映しない。wire schema／DB schemaは維持し、原本保管や自動競合mergeは別課題とする。
+
+
+## スティック型小型プレイヤー（2026-10-21）
+
+`MiniPlayerView`は既存Queue／RendererPlayback／PlaybackPreference／Listening Storeを共有する。`MiniPlayerAppearance`が外観token、端末内の`appearance.mini-player-style`、金属素材、process限定font登録を所有する。`MiniPlayerDisplayText`は表示幅だけを測って長文をスクロールし、非active時とReduce Motionでは停止する。`MiniPlayerWindow`は所属NSWindowだけを透過・標準ボタン非表示へ設定し、`MiniPlayerDragArea`が表示窓のnative dragを担当する。閉じる／最小化はそのWindowだけへ送る。小型外観はアプリ全体のテーマから独立し、DB／交換JSON／Backupへ含めない。
+
+`Resources`はSwiftPMでは専用resource bundle、Xcodeではfolder resourceとして同梱する。DotGothic16とOFL license、生成した銀色素材を含み、外部pathへのruntime依存はない。
+
+
+## キューのドラッグ挿入（2026-10-22）
+
+`QueueInsertionTarget`／`QueueInsertionDropDelegate`が実測した行高とpointer位置から挿入境界を決め、青い線の表示とdrop先に同じ境界を使う。再生済み非表示時は現在曲の直後を下限とする。曲payloadはdrag順でdecodeして`QueueStore.insert(trackIDs:at:)`へ渡し、既存Queue項目は`move(itemID:toOffset:)`を使用する。insertは現在項目のidentityを保持してindexを補正し、既存の100曲上限・保存境界を使用する。
+
+
+挿入線が見えている間だけ`QueueDropIndicatorCleanup`がAppKitのmouse button／画面座標とEscを監視し、SwiftUIのdropExitedが届かない終了経路でも状態を解除する。監視は線の消去・view破棄で停止し、入力を横取りしない。末尾追加領域への移動と画面離脱でも解除する。
+
+## 曲一覧の描画境界（2026-10-22）
+
+QueueStoreは`nowPlaying`から曲ID変更時だけ`nowPlayingTrackID`へ反映し、曲行の再生アイコンを経過時間更新から分離する。SongsTableのdrag payloadはdrag開始時に生成する。LibraryStoreのArtwork要求はactor cacheを先に確認してhit時のfolderアクセスを省略し、CachedArtworkは画像取得時に生成したNSImageを保持する。詳細と未計測範囲は[performance](docs/performance.md)。
+
+
+## このMacの再生監視（2026-10-22）
+
+`SystemAudioPlayer.playbackSnapshot`がAVPlayer／itemの準備状態、timeControlStatus、待機理由、buffer状態・残秒数、stall通知回数、数値error codeを読み取る。既存1秒pollingとPlay直後にRendererPlaybackStoreが取得し、このMacかつ同一generationに限定して状態を反映する。明示Pause／Stop／sleep後は観測で操作を上書きしない。通知はitem読込ごとのUUIDで古いitemからの終了／失敗／stallを破棄する。
+
+診断は既存の最大200件JSONへoptionalな`localPlayback`を追加し、状態変化時に記録する。再生中の位置が3秒以上進まない場合と復帰も記録する（pause／seekで判定をreset）。URL、音源名、device名、frameworkの自由文errorは追加しない。buffer値や位置だけの変化では記録しない。DLNA制御／HTTP配信の経路は変更しない。OSから先のBluetooth電波損失や実際の音声欠落はこのsnapshotでは検出できず、1秒未満の状態変化も取り逃す可能性がある。
+
+QueueStoreは`isLocalPlaybackPending`を使って、このMacのbuffer待機を有効な再生要求として保持する。開始失敗扱いを避け、キュー再生成・削除・clear時の現在項目保護とpause操作に反映する。DLNAの既存状態判定は維持する。

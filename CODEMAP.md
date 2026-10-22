@@ -126,3 +126,9 @@ Keywords: `FeatureAnalysisPlanner`, `FeatureAnalysisMode`, `FeatureRepository`, 
 Tests: `FeatureAnalysisTests.swift`, `FeatureAnalysisServiceTests.swift`, `TrackFeatureTests.swift`, `analyzer/tests/test_worker.py`
 
 ランキング専用ページ: `AnalyticsRankingsView` → `AnalyticsRankingDetailView`、集計: `AnalyticsService.rankingPage`、`AnalyticsRankingKind`／`AnalyticsRankingPage`／`AnalyticsRankingRow`。代表画像は`CachedArtwork`を再利用。
+
+## Stick Mini Player
+
+Primary: `Sources/HomeStereoDLNAApp/MiniPlayerView.swift`, `MiniPlayerAppearance.swift`, `MiniPlayerDisplayText.swift`, `MiniPlayerWindow.swift`
+Keywords: `MiniPlayerStyle`, `appearance.mini-player-style`, `MiniPlayerStylePicker`, `MiniPlayerAssets`, `MiniPlayerDragArea`
+Resources: `Sources/HomeStereoDLNAApp/Resources/` (DotGothic16/OFL, generated silver texture)

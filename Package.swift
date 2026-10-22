@@ -26,7 +26,7 @@ let package = Package(
             linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         .target(name: "HomeStereoDLNAAppCore", dependencies: ["HomeStereoKit", "HomeStereoAppCore"]),
-        .executableTarget(name: "HomeStereoDLNAApp", dependencies: ["HomeStereoDLNAAppCore", "HomeStereoKit", "HomeStereoAppCore"]),
+        .executableTarget(name: "HomeStereoDLNAApp", dependencies: ["HomeStereoDLNAAppCore", "HomeStereoKit", "HomeStereoAppCore"], resources: [.copy("Resources")]),
         .testTarget(name: "HomeStereoAppCoreTests", dependencies: ["HomeStereoAppCore"]),
         .testTarget(name: "HomeStereoDLNAAppCoreTests", dependencies: ["HomeStereoDLNAAppCore", "HomeStereoKit", "HomeStereoAppCore"]),
     ]

@@ -4,7 +4,9 @@ import HomeStereoDLNAAppCore
 #if canImport(HomeStereoAppCore)
 import HomeStereoAppCore
 #endif
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct QueueView: View {
     @Bindable var playback: RendererPlaybackStore
@@ -13,7 +15,7 @@ struct QueueView: View {
     @State private var clearConfirmation = false
     @State private var showsPlayedItems = false
     @State private var isAppendTargeted = false
-    @State private var dropTargetID: QueueItem.ID?
+    @State private var dropOffset: Int?
     var body: some View {
         Group {
             if queue.items.isEmpty {
@@ -43,6 +45,13 @@ struct QueueView: View {
                 }
             }
         }
+        .background {
+            QueueDropIndicatorCleanup(isActive: dropOffset != nil) { dropOffset = nil }
+        }
+        .onChange(of: isAppendTargeted) { _, targeted in
+            if targeted { dropOffset = nil }
+        }
+        .onDisappear { dropOffset = nil }
         .navigationTitle("次はこちら")
         .confirmationDialog("再生キューをすべてクリアしますか？", isPresented: $clearConfirmation) {
             Button("キューをすべてクリア", role: .destructive) { Task { await queue.clear() } }
@@ -110,15 +119,12 @@ struct QueueView: View {
                 let item = entry.item
                 queueRow(item, index: index)
                     .tag(item.id)
-                    .dropDestination(for: String.self) { values, location in
-                        handleDrop(values, on: item, at: index, location: location)
-                    } isTargeted: { isTargeted in
-                        if isTargeted {
-                            dropTargetID = item.id
-                        } else if dropTargetID == item.id {
-                            dropTargetID = nil
-                        }
-                    }
+                    .modifier(QueueInsertionTarget(
+                        index: index,
+                        minimumOffset: showsPlayedItems ? 0 : (queue.currentIndex.map { $0 + 1 } ?? 0),
+                        dropOffset: $dropOffset,
+                        perform: { values, offset in handleDrop(values, at: offset) }
+                    ))
                     .contextMenu {
                         Button("今すぐ再生") { Task { await queue.playItem(id: item.id) } }
                             .disabled(!playback.canPlaySelectedOutput)
@@ -282,30 +288,21 @@ struct QueueView: View {
         Task { await queue.remove(atOffsets: absoluteOffsets) }
     }
 
-    private func handleDrop(
-        _ values: [String],
-        on targetItem: QueueItem,
-        at targetIndex: Int,
-        location: CGPoint
-    ) -> Bool {
+    private func handleDrop(_ values: [String], at offset: Int) -> Bool {
+        dropOffset = nil
         if let movingID = values.compactMap(QueueItemDragPayload.decode).first {
-            guard movingID != targetItem.id else { return true }
-            var destination = targetIndex + (location.y >= 25 ? 1 : 0)
-            if !showsPlayedItems, let currentIndex = queue.currentIndex {
-                destination = max(destination, currentIndex + 1)
-            }
-            Task { await queue.move(itemID: movingID, toOffset: destination) }
+            guard !queue.items.enumerated().contains(where: { $0.offset == queue.currentIndex && $0.element.id == movingID }) else { return false }
+            Task { await queue.move(itemID: movingID, toOffset: offset) }
             return true
         }
-
         let trackIDs = values.flatMap(TrackDragPayload.decode)
+            .filter { library.track(id: $0)?.scanState == .available }
         guard !trackIDs.isEmpty else { return false }
-        Task { await queue.append(trackIDs: trackIDs) }
+        Task { await queue.insert(trackIDs: trackIDs, at: offset) }
         return true
     }
 
     private func queueRowBackground(_ item: QueueItem, index: Int) -> Color {
-        if dropTargetID == item.id { return Color.accentColor.opacity(0.16) }
         if index == queue.currentIndex { return Color.accentColor.opacity(0.09) }
         return .clear
     }
@@ -316,6 +313,139 @@ struct QueueView: View {
         return "\(queue.items.count)曲 · あと\(remaining)曲"
     }
 
+}
+
+/// SwiftUI may omit dropExited when a drag is cancelled or ends outside its target.
+/// Observe only while a line is visible; this view never intercepts mouse events.
+private struct QueueDropIndicatorCleanup: NSViewRepresentable {
+    let isActive: Bool
+    let clear: () -> Void
+
+    func makeNSView(context: Context) -> MonitorView { MonitorView() }
+
+    func updateNSView(_ view: MonitorView, context: Context) {
+        view.clear = clear
+        view.setActive(isActive)
+    }
+
+    static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.setActive(false) }
+
+    final class MonitorView: NSView {
+        var clear: (() -> Void)?
+        private var timer: Timer?
+        private var escapeMonitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        func setActive(_ active: Bool) {
+            if active {
+                guard timer == nil else { return }
+                timer = Timer(timeInterval: 0.05, target: self, selector: #selector(checkDrag), userInfo: nil, repeats: true)
+                if let timer { RunLoop.main.add(timer, forMode: .common) }
+                escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                    if event.keyCode == 53 { self?.endDrag() }
+                    return event
+                }
+            } else {
+                timer?.invalidate()
+                timer = nil
+                if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+                escapeMonitor = nil
+            }
+        }
+
+        @objc private func checkDrag() {
+            guard let window else { endDrag(); return }
+            let screenBounds = window.convertToScreen(convert(bounds, to: nil))
+            if NSEvent.pressedMouseButtons & 1 == 0 || !screenBounds.contains(NSEvent.mouseLocation) {
+                endDrag()
+            }
+        }
+
+        private func endDrag() {
+            setActive(false)
+            clear?()
+        }
+    }
+}
+
+private struct QueueInsertionTarget: ViewModifier {
+    let index: Int
+    let minimumOffset: Int
+    @Binding var dropOffset: Int?
+    let perform: ([String], Int) -> Bool
+    @State private var rowHeight: CGFloat = 58
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                GeometryReader { geometry in
+                    Color.clear
+                        .onAppear { rowHeight = geometry.size.height }
+                        .onChange(of: geometry.size.height) { _, height in rowHeight = height }
+                }
+            }
+            .overlay(alignment: .top) { insertionLine(at: index) }
+            .overlay(alignment: .bottom) { insertionLine(at: index + 1) }
+            .onDrop(of: [UTType.text], delegate: QueueInsertionDropDelegate(
+                index: index, minimumOffset: minimumOffset, rowHeight: rowHeight,
+                dropOffset: $dropOffset, perform: perform
+            ))
+    }
+
+    @ViewBuilder private func insertionLine(at offset: Int) -> some View {
+        if dropOffset == offset {
+            HStack(spacing: 0) {
+                Circle().frame(width: 7, height: 7)
+                Rectangle().frame(height: 2)
+            }
+            .foregroundStyle(Color.blue)
+            .allowsHitTesting(false)
+            .accessibilityLabel("キューの挿入位置")
+        }
+    }
+}
+
+private struct QueueInsertionDropDelegate: DropDelegate {
+    let index: Int
+    let minimumOffset: Int
+    let rowHeight: CGFloat
+    @Binding var dropOffset: Int?
+    let perform: ([String], Int) -> Bool
+
+    private func destination(_ info: DropInfo) -> Int {
+        max(minimumOffset, index + (info.location.y >= rowHeight / 2 ? 1 : 0))
+    }
+
+    func dropEntered(info: DropInfo) { dropOffset = destination(info) }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        dropOffset = destination(info)
+        return DropProposal(operation: .copy)
+    }
+
+    func dropExited(info: DropInfo) { dropOffset = nil }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let offset = destination(info)
+        dropOffset = nil
+        let providers = info.itemProviders(for: [UTType.text])
+        guard !providers.isEmpty else { return false }
+        // Decode all providers in drag order before changing the queue.
+        Task { @MainActor in
+            var values: [String] = []
+            for provider in providers {
+                let value: String? = await withCheckedContinuation { continuation in
+                    _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                        continuation.resume(returning: object as? String)
+                    }
+                }
+                if let value { values.append(value) }
+            }
+            _ = perform(values, offset)
+        }
+        return true
+    }
 }
 
 private enum QueueItemDragPayload {

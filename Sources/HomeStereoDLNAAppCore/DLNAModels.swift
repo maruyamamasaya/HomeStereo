@@ -223,6 +223,37 @@ public struct PlaybackDiagnostic: Equatable, Sendable {
     }
 }
 
+/// Deliberately excludes URLs, device names and free-form framework error messages.
+public struct LocalPlaybackSnapshot: Codable, Equatable, Sendable {
+    public enum ItemState: String, Codable, Sendable { case preparing, ready, failed }
+    public enum TransportState: String, Codable, Sendable { case paused, waiting, playing }
+    public enum WaitReason: String, Codable, Sendable { case buffering, evaluating, noItem, other }
+    public var itemState: ItemState
+    public var transportState: TransportState
+    public var waitReason: WaitReason?
+    public var bufferEmpty: Bool
+    public var likelyToKeepUp: Bool
+    public var bufferedSeconds: Double
+    public var position: Double
+    public var stallCount: Int
+    public var errorCode: Int?
+
+    public init(itemState: ItemState, transportState: TransportState, waitReason: WaitReason? = nil,
+                bufferEmpty: Bool = false, likelyToKeepUp: Bool = true, bufferedSeconds: Double = 0,
+                position: Double = 0, stallCount: Int = 0, errorCode: Int? = nil) {
+        self.itemState = itemState; self.transportState = transportState; self.waitReason = waitReason
+        self.bufferEmpty = bufferEmpty; self.likelyToKeepUp = likelyToKeepUp
+        self.bufferedSeconds = bufferedSeconds; self.position = position
+        self.stallCount = stallCount; self.errorCode = errorCode
+    }
+
+    func hasSameCondition(as other: Self) -> Bool {
+        itemState == other.itemState && transportState == other.transportState &&
+        waitReason == other.waitReason && bufferEmpty == other.bufferEmpty &&
+        likelyToKeepUp == other.likelyToKeepUp && stallCount == other.stallCount && errorCode == other.errorCode
+    }
+}
+
 public struct PlaybackDiagnosticEvent: Codable, Equatable, Sendable {
     public let timestamp: Date
     public let generationID: UUID
@@ -230,13 +261,40 @@ public struct PlaybackDiagnosticEvent: Codable, Equatable, Sendable {
     public let outcome: String
     public let httpStatus: Int?
     public let upnpErrorCode: Int?
+    public let localPlayback: LocalPlaybackSnapshot?
 
-    public init(timestamp: Date = Date(), generationID: UUID, action: String, outcome: String, httpStatus: Int? = nil, upnpErrorCode: Int? = nil) {
+    public init(timestamp: Date = Date(), generationID: UUID, action: String, outcome: String, httpStatus: Int? = nil, upnpErrorCode: Int? = nil, localPlayback: LocalPlaybackSnapshot? = nil) {
+        self.localPlayback = localPlayback
         self.timestamp = timestamp
         self.generationID = generationID
         self.action = action
         self.outcome = outcome
         self.httpStatus = httpStatus
         self.upnpErrorCode = upnpErrorCode
+    }
+}
+
+/// Detects an AVPlayer-reported playing state whose media clock stops advancing.
+/// This is evidence of a playback delay, not proof of Bluetooth packet loss.
+struct LocalPlaybackProgressMonitor {
+    private var position: Double?
+    private var lastAdvance: Double?
+    private var stalled = false
+
+    mutating func update(_ snapshot: LocalPlaybackSnapshot, uptime: Double) -> Bool? {
+        guard snapshot.transportState == .playing else {
+            position = nil; lastAdvance = nil
+            return nil
+        }
+        if let position, abs(snapshot.position - position) < 0.01 {
+            if let lastAdvance, uptime - lastAdvance >= 3, !stalled {
+                stalled = true
+                return true
+            }
+        } else {
+            position = snapshot.position; lastAdvance = uptime
+            if stalled { stalled = false; return false }
+        }
+        return nil
     }
 }

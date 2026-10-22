@@ -16,11 +16,16 @@ public final class SystemAudioPlayer: LocalAudioPlaying {
     nonisolated(unsafe) private var endedObserver: NSObjectProtocol?
     nonisolated(unsafe) private var failedObserver: NSObjectProtocol?
 
+    nonisolated(unsafe) private var stalledObserver: NSObjectProtocol?
+    private var stallCount = 0
+    private var observationID = UUID()
+
     public init() {}
 
     deinit {
         if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
         if let failedObserver { NotificationCenter.default.removeObserver(failedObserver) }
+        if let stalledObserver { NotificationCenter.default.removeObserver(stalledObserver) }
     }
 
     public func load(fileURL: URL) throws {
@@ -29,20 +34,65 @@ public final class SystemAudioPlayer: LocalAudioPlaying {
         }
         if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
         if let failedObserver { NotificationCenter.default.removeObserver(failedObserver) }
+        if let stalledObserver { NotificationCenter.default.removeObserver(stalledObserver) }
+        stallCount = 0
+        observationID = UUID()
+        let expectedObservation = observationID
         let item = AVPlayerItem(url: fileURL)
+        stalledObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemPlaybackStalled, object: item, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.observationID == expectedObservation else { return }
+                self.stallCount += 1
+            }
+        }
         endedObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.onPlaybackEnded?() }
+            MainActor.assumeIsolated {
+                guard let self, self.observationID == expectedObservation else { return }
+                self.onPlaybackEnded?()
+            }
         }
         failedObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.onPlaybackFailure?("システム出力で再生を完了できませんでした。")
+                guard let self, self.observationID == expectedObservation else { return }
+                self.onPlaybackFailure?("システム出力で再生を完了できませんでした。")
             }
         }
         player.replaceCurrentItem(with: item)
+    }
+
+    public func playbackSnapshot() -> LocalPlaybackSnapshot? {
+        guard let item = player.currentItem else { return nil }
+        let position = currentTime()
+        let buffered = item.loadedTimeRanges.reduce(0.0) { result, value in
+            let range = value.timeRangeValue
+            let start = range.start.seconds
+            let end = CMTimeRangeGetEnd(range).seconds
+            guard start.isFinite, end.isFinite, start <= position, end >= position else { return result }
+            return max(result, end - position)
+        }
+        let reason: LocalPlaybackSnapshot.WaitReason?
+        switch player.reasonForWaitingToPlay {
+        case .toMinimizeStalls: reason = .buffering
+        case .evaluatingBufferingRate: reason = .evaluating
+        case .noItemToPlay: reason = .noItem
+        case nil: reason = nil
+        default: reason = .other
+        }
+        return LocalPlaybackSnapshot(
+            itemState: item.status == .failed || player.status == .failed ? .failed : (item.status == .readyToPlay ? .ready : .preparing),
+            transportState: player.timeControlStatus == .playing ? .playing :
+                (player.timeControlStatus == .waitingToPlayAtSpecifiedRate ? .waiting : .paused),
+            waitReason: reason, bufferEmpty: item.isPlaybackBufferEmpty,
+            likelyToKeepUp: item.isPlaybackLikelyToKeepUp, bufferedSeconds: buffered,
+            position: position, stallCount: stallCount,
+            errorCode: (item.error as NSError?)?.code ?? (player.error as NSError?)?.code
+        )
     }
 
     public func setAmplitude(_ value: Float) { player.volume = max(0, min(1, value)) }

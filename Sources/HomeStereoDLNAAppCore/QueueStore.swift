@@ -12,6 +12,8 @@ public final class QueueStore {
     public private(set) var errorMessage: String?
     public private(set) var isTransitioning = false
     public private(set) var nowPlaying = NowPlayingPresentation()
+    /// Stable row highlight; elapsed-time updates must not invalidate the song table.
+    public private(set) var nowPlayingTrackID: Track.ID?
     public var selectedItemIDs = Set<QueueItem.ID>()
     @ObservationIgnored public var onTrackStarted: (@MainActor (
         Track.ID, TimeInterval, MyMusicPlaySource, MyMusicSelectionType
@@ -181,7 +183,7 @@ public final class QueueStore {
             do {
                 let values = try await (repository as? any TrackPreferencePersisting)?.loadTrackPreferences() ?? []
                 let preferences = Dictionary(uniqueKeysWithValues: values.map { ($0.trackID, $0.playbackPreference) })
-                let active = playback.playbackState == .playing || playback.playbackState == .paused
+                let active = playback.playbackState == .playing || playback.playbackState == .paused || playback.isLocalPlaybackPending
                 let current = active && !currentWasRemoved && currentTrack?.id == playback.selectedLibraryTrackID
                     ? snapshot.currentIndex.map { snapshot.items[$0] } : nil
                 let candidates = trackIDs.filter { id in
@@ -217,12 +219,20 @@ public final class QueueStore {
     }
 
     public func append(trackIDs: [Track.ID]) async {
+        await insert(trackIDs: trackIDs, at: snapshot.items.count)
+    }
+
+    /// Inserts at a queue boundary while preserving the current item and playback position.
+    public func insert(trackIDs: [Track.ID], at offset: Int) async {
         let additions = trackIDs.suffix(Self.maximumItemCount).map { QueueItem(trackID: $0) }
         guard !additions.isEmpty else { return }
-        snapshot.items.append(contentsOf: additions)
-        if snapshot.currentIndex == nil, !snapshot.items.isEmpty { snapshot.currentIndex = 0 }
+        let currentID = currentItemID
+        snapshot.items.insert(contentsOf: additions, at: min(max(0, offset), snapshot.items.count))
+        snapshot.currentIndex = currentID.flatMap { id in snapshot.items.firstIndex { $0.id == id } }
+            ?? (snapshot.items.isEmpty ? nil : 0)
         trimOldestItemsIfNeeded()
         await persist()
+        scheduleNextStereoPrewarm()
     }
 
     public func playImmediately(
@@ -268,7 +278,7 @@ public final class QueueStore {
         for index in offsets.sorted(by: >) { snapshot.items.remove(at: index) }
         selectedItemIDs.subtract(removedIDs)
         if removedCurrent {
-            currentWasRemoved = playback.playbackState == .playing || playback.playbackState == .paused
+            currentWasRemoved = playback.playbackState == .playing || playback.playbackState == .paused || playback.isLocalPlaybackPending
             snapshot.currentIndex = snapshot.items.isEmpty ? nil : min(oldIndex, snapshot.items.count - 1)
         } else if let currentID {
             snapshot.currentIndex = snapshot.items.firstIndex(where: { $0.id == currentID })
@@ -326,7 +336,7 @@ public final class QueueStore {
         snapshot.items = []
         snapshot.currentIndex = nil
         snapshot.position = 0
-        currentWasRemoved = playback.playbackState == .playing || playback.playbackState == .paused
+        currentWasRemoved = playback.playbackState == .playing || playback.playbackState == .paused || playback.isLocalPlaybackPending
         selectedItemIDs.removeAll()
         await persist()
     }
@@ -342,7 +352,7 @@ public final class QueueStore {
     public func play() async {
         await withPlaybackTransition {
             if playback.selectedLibraryTrackID == nil, playback.media != nil { await playback.play() }
-            else if playback.playbackState == .paused { await playback.play() }
+            else if playback.playbackState == .paused || playback.isLocalPlaybackPending { await playback.play() }
             else { await playCurrent() }
         }
     }
@@ -352,7 +362,7 @@ public final class QueueStore {
     public func togglePlayback() async {
         if playback.selectedLibraryTrackID == nil, playback.media != nil {
             await playback.togglePlayback()
-        } else if playback.playbackState == .playing {
+        } else if playback.playbackState == .playing || playback.isLocalPlaybackPending {
             await pause()
         } else {
             await play()
@@ -430,7 +440,7 @@ public final class QueueStore {
         if currentIndex >= overflow {
             snapshot.currentIndex = currentIndex - overflow
         } else {
-            currentWasRemoved = playback.playbackState == .playing || playback.playbackState == .paused
+            currentWasRemoved = playback.playbackState == .playing || playback.playbackState == .paused || playback.isLocalPlaybackPending
             snapshot.currentIndex = snapshot.items.isEmpty ? nil : 0
         }
     }
@@ -473,7 +483,7 @@ public final class QueueStore {
             return
         }
         await playback.play()
-        guard playback.playbackState == .playing else {
+        guard playback.playbackState == .playing || playback.isLocalPlaybackPending else {
             errorMessage = playback.lastError?.details ?? "再生を開始できませんでした。"; return
         }
         if resumePosition > 0 { await playback.seek(to: resumePosition) }
@@ -519,6 +529,7 @@ public final class QueueStore {
     private func refreshNowPlaying(force: Bool = false) {
         let presentation = makeNowPlayingPresentation()
         guard force || presentation != nowPlaying else { return }
+        if nowPlayingTrackID != presentation.trackID { nowPlayingTrackID = presentation.trackID }
         nowPlaying = presentation
         onNowPlayingChange?(presentation)
     }

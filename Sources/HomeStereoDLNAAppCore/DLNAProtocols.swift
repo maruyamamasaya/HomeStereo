@@ -82,9 +82,11 @@ public protocol LocalAudioPlaying: AnyObject {
     func currentTime() -> TimeInterval
     func itemDuration() -> TimeInterval
     func setAmplitude(_ value: Float)
+    func playbackSnapshot() -> LocalPlaybackSnapshot?
 }
 
 public extension LocalAudioPlaying {
+    func playbackSnapshot() -> LocalPlaybackSnapshot? { nil }
     func setAmplitude(_ value: Float) {}
 }
 

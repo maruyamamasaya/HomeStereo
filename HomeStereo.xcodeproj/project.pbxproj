@@ -78,6 +78,11 @@
 		F10000000000000000000003 /* PlaylistTagEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000003 /* PlaylistTagEditorView.swift */; };
 		F10000000000000000000004 /* PlaylistDestinationPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000004 /* PlaylistDestinationPicker.swift */; };
 		F10000000000000000000005 /* AnalyticsRankingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000005 /* AnalyticsRankingsView.swift */; };
+		FA1000000000000000000001 /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2000000000000000000001 /* MiniPlayerView.swift */; };
+		FA1000000000000000000002 /* MiniPlayerAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2000000000000000000002 /* MiniPlayerAppearance.swift */; };
+		FA1000000000000000000003 /* MiniPlayerWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2000000000000000000003 /* MiniPlayerWindow.swift */; };
+		FA1000000000000000000004 /* MiniPlayerDisplayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2000000000000000000004 /* MiniPlayerDisplayText.swift */; };
+		FA1000000000000000000005 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = FA2000000000000000000005 /* Resources */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -155,6 +160,11 @@
 		F20000000000000000000003 /* PlaylistTagEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistTagEditorView.swift; sourceTree = "<group>"; };
 		F20000000000000000000004 /* PlaylistDestinationPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistDestinationPicker.swift; sourceTree = "<group>"; };
 		F20000000000000000000005 /* AnalyticsRankingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsRankingsView.swift; sourceTree = "<group>"; };
+		FA2000000000000000000001 /* MiniPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerView.swift; sourceTree = "<group>"; };
+		FA2000000000000000000002 /* MiniPlayerAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerAppearance.swift; sourceTree = "<group>"; };
+		FA2000000000000000000003 /* MiniPlayerWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerWindow.swift; sourceTree = "<group>"; };
+		FA2000000000000000000004 /* MiniPlayerDisplayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerDisplayText.swift; sourceTree = "<group>"; };
+		FA2000000000000000000005 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -283,6 +293,11 @@
 				F20000000000000000000005 /* AnalyticsRankingsView.swift */,
 				C20000000000000000000015 /* ListeningView.swift */,
 				C20000000000000000000017 /* MenuBarPlaybackView.swift */,
+				FA2000000000000000000005 /* Resources */,
+				FA2000000000000000000004 /* MiniPlayerDisplayText.swift */,
+				FA2000000000000000000003 /* MiniPlayerWindow.swift */,
+				FA2000000000000000000002 /* MiniPlayerAppearance.swift */,
+				FA2000000000000000000001 /* MiniPlayerView.swift */,
 				C2000000000000000000001A /* BackupView.swift */,
 				C2000000000000000000001C /* MyMusicTransferView.swift */,
 				E20000000000000000000003 /* TrackFeatureView.swift */,
@@ -341,6 +356,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000000000000000000000C /* Assets.xcassets in Resources */,
+				FA1000000000000000000005 /* Resources in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -410,6 +426,10 @@
 				F10000000000000000000005 /* AnalyticsRankingsView.swift in Sources */,
 				C10000000000000000000015 /* ListeningView.swift in Sources */,
 				C10000000000000000000017 /* MenuBarPlaybackView.swift in Sources */,
+				FA1000000000000000000004 /* MiniPlayerDisplayText.swift in Sources */,
+				FA1000000000000000000003 /* MiniPlayerWindow.swift in Sources */,
+				FA1000000000000000000002 /* MiniPlayerAppearance.swift in Sources */,
+				FA1000000000000000000001 /* MiniPlayerView.swift in Sources */,
 				C1000000000000000000001A /* BackupView.swift in Sources */,
 				C1000000000000000000001C /* MyMusicTransferView.swift in Sources */,
 				C1000000000000000000001E /* AnalyticsView.swift in Sources */,

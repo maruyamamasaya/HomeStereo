@@ -78,7 +78,7 @@ Sony h.ear go系Rendererへ、Mac上で選択した音源をDLNA／UPnP経由で
 - Renderer側の曲変更／停止／切断同期、再生中のidle sleep抑止と確実な解除
 - IP、token、絶対pathを含めない診断JSONの書き出し
 - 曲／Album／Artist／Playlistの複数選択、Queue／Playlistへのdrag & drop、右クリック操作
-- 開閉と状態復元が可能なQueue Inspector、Artwork付き小型プレイヤーWindow
+- 開閉と状態復元が可能なQueue Inspector、スティック型小型プレイヤーWindow。設定／メニューバー／小型画面の右クリックからスモーク・ブルーメタルを選択できる。左端の×で小型画面だけを閉じ、−で最小化。表示窓をドラッグして移動し、右クリックからメイン画面を開く。Goodとお気に入り、前後移動、再生／一時停止を操作できる
 - window size／Sidebar状態復元、VoiceOver label、system文字サイズ／contrast／Reduce Motion準拠。960px級の狭い幅ではQueue Inspectorを自動退避し、文字を縮小せずメイン領域を確保
 - DeleteはQueue／Playlist参照だけを対象とし、folder解除やresetを含むdestructive操作は確認後に実行
 - rename／同一folder内移動／missing復帰で参照を保つ保守的Track Identity（SQLite schema v8）

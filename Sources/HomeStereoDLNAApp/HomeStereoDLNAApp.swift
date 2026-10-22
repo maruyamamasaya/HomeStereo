@@ -138,12 +138,11 @@ struct HomeStereoDLNAApp: App {
         }
         .defaultSize(width: 1_280, height: 760)
         Window("Mini Player", id: "mini-player") {
-            HomeStereoThemeRoot(theme: selectedTheme) {
-                MiniPlayerView(playback: store, queue: queue, preferences: preferences, library: library)
-                    .background(WindowFrameAutosave(name: "HomeStereo.MiniPlayer"))
-            }
+            MiniPlayerView(playback: store, queue: queue, preferences: preferences, listening: listening)
+                .background(WindowFrameAutosave(name: "HomeStereo.MiniPlayer.StickV2"))
         }
-        .defaultSize(width: 430, height: 130)
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 696, height: 122)
         .windowResizability(.contentMinSize)
         MenuBarExtra {
             HomeStereoThemeRoot(theme: selectedTheme) {

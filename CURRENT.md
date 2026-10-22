@@ -4,6 +4,16 @@ HomeStereoは、Mac上で選択した音源をLAN内DLNA RendererへHTTP配信�
 
 ## Current Phase
 
+2026-10-22: キュー挿入線の残留対策を含む現在の作業ツリーを専用scriptでRelease buildし、`/Applications/HomeStereo.app`へ更新・起動した（build `20261022133419`）。署名、build成果物との実行ファイルSHA-256一致、正式pathからのprocess起動を確認。実UIのdrag操作確認は未実施。
+
+2026-10-22: 曲一覧の左端6操作は、アイコンの寸法・配置を維持し、透明な22×24ptのlabel全体をクリック対象にした。実画面での周辺クリック確認は未実施。
+
+2026-10-22: このMacの再生状態監視・診断と現在の作業ツリーをRelease buildし、`/Applications/HomeStereo.app`へ配置・起動した（build `20261022132817`）。署名、build成果物との実行ファイルSHA-256一致、正式pathからのprocess起動を確認。Bluetoothの試聴確認は利用者側で実施予定。
+
+2026-10-22: 「このMac」のAVPlayer状態を既存pollingで監視し、準備／buffer待機をtransitioningへ反映する。既存診断JSONに匿名の状態・buffer秒数・stall通知回数・数値error code・再生位置停滞／復帰を記録する。Bluetoothの電波障害やDAC後段は判定対象外。実機確認は未実施。
+
+2026-10-21: スティック型ミニプレイヤー（スモーク／ブルーメタル）をRelease buildし、`/Applications/HomeStereo.app`へ配置・起動した（build `20261021132817`）。署名・実行ファイルhash一致を確認。今回の検証用copy、一時build、残存していた旧版app backupを削除した。
+
 2026-10-16: scan通知の成功／注意／エラー分離を含む作業ツリーを専用スクリプトでRelease buildし、`/Applications/HomeStereo.app`へ正式配置・起動した（build `20261016181544`）。署名と実行ファイルhash一致を確認。詳細は[sessions/2026-10-16-scan-notice-categories.md](sessions/2026-10-16-scan-notice-categories.md)。
 
 2026-10-08: 保存状態JSON backup v2を含む現在の作業ツリーをRelease buildし、`/Applications/HomeStereo.app`へ正式配置・起動した（build `20261008073746`、bundle `jp.local.HomeStereo.Beta`）。署名／実行ファイルhash一致を確認。実データrestore・実機UI／DLNA再生は未確認。
@@ -14,7 +24,13 @@ HomeStereoは、Mac上で選択した音源をLAN内DLNA RendererへHTTP配信�
 
 Audio Hijackの`Sony Stereo Bridge - BlackHole`はMusic→Channels（No Change）→BlackHole 2ch、全ブロック有効、Output 2%、Auto Run Off、Stoppedまで設定済み。LEFT ONLYは左−54.0dBFS／右−160dBFS、RIGHT ONLYは左−160dBFS／右−54.0dBFSで、反転・漏れ・clippingなしを確認した。検証済みsegmentは音量5/100で両RendererがHTTP GET、Play、1秒完走、`STOPPED`まで成功した。詳細な現在地と課題は[`docs/sony-stereo-bridge/status-and-history.md`](docs/sony-stereo-bridge/status-and-history.md)を正本とする。
 
+2026-10-22: キューの行間へ青い挿入線を表示し、ポインター位置に合わせて前後を切り替える。曲一覧からのdropも表示位置へ順序を保って追加し、キュー内の移動と位置表示を共有する。再生済み非表示時は現在曲の後ろ以降を対象とする。 ドラッグ終了・領域外移動・Esc中止・画面離脱でも挿入線を解除する。
+
+2026-10-22: 再生中の曲一覧の不要な更新・処理を軽減。曲ID専用のObservation、drag開始時のpayload生成、Artwork cache先行確認とNSImage再利用を追加した。実UIのカクつき改善率は未計測。詳細は[performance](docs/performance.md)。
+
 ## Implemented
+
+- 小型プレイヤーは金属フレーム・ガラス表示窓・セラミック風操作ボタンを持つスティック型。スモーク／ブルーメタルを設定、メニューバー、右クリックから選択し端末内保存する。DotGothic16で曲名／アーティストを別行表示し、長い文字はReduce Motion設定に従ってスクロールする。左端の×／−で閉じる／最小化し、表示窓をドラッグして移動。Good／お気に入り／前後移動／再生は共有Storeを使用し、右クリックからBad評価とメイン画面を開ける。標準タイトルバー操作は小型Windowだけで隠す。
 
 - HomeStereoAnalyzer補助アプリは本体と同じAppIconを使用する。installerがrepositoryの画像からICNSを生成し、Info.plistへ設定する。
 

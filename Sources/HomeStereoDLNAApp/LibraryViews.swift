@@ -439,14 +439,15 @@ private struct SongsTable: View {
     @State private var playlistAddition: PlaylistAdditionRequest?
 
     var body: some View {
-        VStack(spacing: 0) {
+        let selection = selectedTrackIDs
+        return VStack(spacing: 0) {
             RandomTrackDisplayControls(display: randomDisplay, tracks: tracks)
-            if !selectedTrackIDs.isEmpty {
+            if !selection.isEmpty {
                 HStack {
-                    Text("\(selectedTrackIDs.count)曲を選択中").foregroundStyle(.secondary)
+                    Text("\(selection.count)曲を選択中").foregroundStyle(.secondary)
                     Spacer()
-                    Button("選択した\(selectedTrackIDs.count)曲をプレイリストに追加", systemImage: "text.badge.plus") {
-                        playlistAddition = PlaylistAdditionRequest(trackIDs: selectedTrackIDs)
+                    Button("選択した\(selection.count)曲をプレイリストに追加", systemImage: "text.badge.plus") {
+                        playlistAddition = PlaylistAdditionRequest(trackIDs: selection)
                     }
                 }.padding(.horizontal, 12).padding(.vertical, 8)
             }
@@ -475,7 +476,9 @@ private struct SongsTable: View {
                         let ids = selectedTrackIDs(for: track)
                         QueueContextMenu(queue: queue, playlists: playlists, listening: listening, trackIDs: ids, startingAt: track.id, onAddToPlaylist: { playlistAddition = PlaylistAdditionRequest(trackIDs: ids) })
                     }
-                    .draggable(TrackDragPayload.encode(selectedTrackIDs(for: track)))
+                    .onDrag {
+                        NSItemProvider(object: TrackDragPayload.encode(selectedTrackIDs(for: track)) as NSString)
+                    }
                 }
                 .width(min: 200, ideal: 300)
                 TableColumn("アーティスト", sortUsing: LibraryTrackComparator(sort: .artist)) { track in
@@ -547,14 +550,15 @@ private struct SongsTable: View {
             Button {
                 play(track)
             } label: {
-                Image(systemName: queue.nowPlaying.trackID == track.id ? "speaker.wave.2.fill" : "play.fill")
-                    .foregroundStyle(queue.nowPlaying.trackID == track.id ? Color.accentColor : Color.secondary)
+                Image(systemName: queue.nowPlayingTrackID == track.id ? "speaker.wave.2.fill" : "play.fill")
+                    .foregroundStyle(queue.nowPlayingTrackID == track.id ? Color.accentColor : Color.secondary)
                     .frame(width: 22, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(track.scanState != .available || !playback.canPlaySelectedOutput)
             .help(rowPlayHelp(track))
-            .accessibilityLabel(queue.nowPlaying.trackID == track.id ? "再生中：\(track.title)" : "\(track.title)を今すぐ再生")
+            .accessibilityLabel(queue.nowPlayingTrackID == track.id ? "再生中：\(track.title)" : "\(track.title)を今すぐ再生")
 
             Button {
                 append(track)
@@ -562,6 +566,7 @@ private struct SongsTable: View {
                 Image(systemName: "plus")
                     .foregroundStyle(Color.secondary)
                     .frame(width: 22, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(track.scanState != .available)
@@ -576,6 +581,7 @@ private struct SongsTable: View {
                 Image(systemName: listening.isFavorite(track.id) ? "heart.fill" : "heart")
                     .foregroundStyle(listening.isFavorite(track.id) ? Color.pink : Color.secondary)
                     .frame(width: 22, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(listening.isFavorite(track.id) ? "お気に入りから削除" : "お気に入りに追加")
@@ -592,6 +598,7 @@ private struct SongsTable: View {
             Image(systemName: "text.badge.plus")
                 .foregroundStyle(Color.secondary)
                 .frame(width: 22, height: 24)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("この曲をプレイリストに追加")
@@ -655,6 +662,7 @@ private struct SongsTable: View {
                         .accessibilityHidden(true)
                 }
             }
+            .contentShape(Rectangle())
     }
 
     private func trackTapGesture(_ track: Track) -> some Gesture {
@@ -672,11 +680,12 @@ private struct SongsTable: View {
 
     private func selectedTrackIDs(for track: Track) -> [Track.ID] {
         guard library.selectedTrackIDs.contains(track.id) else { return [track.id] }
-        return (randomDisplay.tracks ?? tracks).map(\.id).filter { library.selectedTrackIDs.contains($0) }
+        return (randomDisplay.tracks ?? tracks).lazy.filter { library.selectedTrackIDs.contains($0.id) }.map(\.id)
     }
 
     private var selectedTrackIDs: [Track.ID] {
-        (randomDisplay.tracks ?? tracks).map(\.id).filter { library.selectedTrackIDs.contains($0) }
+        guard !library.selectedTrackIDs.isEmpty else { return [] }
+        return (randomDisplay.tracks ?? tracks).lazy.map(\.id).filter { library.selectedTrackIDs.contains($0) }.map { $0 }
     }
 
     private var tableSortOrder: Binding<[LibraryTrackComparator]> {
@@ -1016,7 +1025,7 @@ private struct ArtistTrackRow: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 24, alignment: .trailing)
-                if queue.nowPlaying.trackID == track.id {
+                if queue.nowPlayingTrackID == track.id {
                     Image(systemName: "speaker.wave.2.fill")
                         .foregroundStyle(.tint)
                         .accessibilityLabel("再生中")
@@ -1086,7 +1095,7 @@ private struct CollectionDetail: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .frame(width: 24, alignment: .trailing)
-                    if queue.nowPlaying.trackID == track.id {
+                    if queue.nowPlayingTrackID == track.id {
                         Image(systemName: "speaker.wave.2.fill")
                             .foregroundStyle(.tint)
                             .accessibilityLabel("再生中")
@@ -1203,11 +1212,11 @@ struct CachedArtwork: View {
     let track: Track
     let library: LibraryStore
     let size: CGFloat
-    @State private var data: Data?
+    @State private var image: NSImage?
 
     var body: some View {
         Group {
-            if let data, let image = NSImage(data: data) {
+            if let image {
                 Image(nsImage: image).resizable().scaledToFill()
             } else {
                 Image(systemName: "music.note").foregroundStyle(.secondary)
@@ -1218,7 +1227,7 @@ struct CachedArtwork: View {
         .task(id: track.id) {
             let loaded = await library.artworkData(for: track, pixelSize: Int(size * 2))
             guard !Task.isCancelled else { return }
-            data = loaded
+            image = loaded.flatMap(NSImage.init(data:))
         }
     }
 }

@@ -199,6 +199,7 @@ struct HomeStereoThemeSettingsView: View {
 
     var body: some View {
         Form {
+            Section("小型プレイヤー") { MiniPlayerStylePicker() }
             Section("テーマ") {
                 ForEach(HomeStereoTheme.allCases) { theme in
                     themeButton(theme)
@@ -206,7 +207,7 @@ struct HomeStereoThemeSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 440)
+        .frame(width: 560, height: 520)
         .homeStereoThemeScreen()
     }
 

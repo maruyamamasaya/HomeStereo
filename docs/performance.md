@@ -69,3 +69,15 @@ HOMESTEREO_RUN_PERFORMANCE=1 /usr/bin/time -l swift test --filter LibraryPerform
 `maximum resident set size`はSwift build／test runnerを含む369,164,288 bytesであり、アプリの曲一覧だけの値ではないため比較指標にはしない。`Table`は表示行を仮想化し、Artworkは画面内の要求時だけ読み込んで48件／24MiB上限cacheへ保存する。SQLiteへArtwork本体を保持せず、`Track`の全件読込時も画像を展開しない。この条件では全件表示を止めるメモリ増加は観測されなかった。
 
 曲一覧は全30,000件をsort済み配列として渡す。検索、ジャンル絞り込み、ヘッダー並び替えはbackground actorで構築し、検索だけ300ms debounceする。同じ曲集合・sort条件では全件sort済みbaseを再利用するため、ジャンルfilter解除は線形filterだけで全件再sortしない。今回のfixtureでは従来の全件sortが約0.387秒、base再利用後のfilter解除が約0.023秒だった。結果反映時はnative tableを世代単位で置き換え、AppKitが数万行の差分insertを一括計測する経路を避ける。ヘッダー並び替えは曲名、アーティスト、アルバム、ジャンル、年、時間に限定し、Album／Artist一覧の再集計を省略する。音質、サイズ、ファイルパスは表示専用である。再生キューは永続化・並び替え・UI更新の対象になるためライブラリ一覧とは分離し、通常再生／シャッフルとも生成上限を100曲とする。
+
+
+## 再生中の曲一覧の更新負荷（2026-10-22）
+
+断続的なscrollの引っかかり（ユーザー申告では再生中）について、次の不要な処理をコードから確認して削減した。実音源2万曲でのframe time／Instruments計測は未実施で、症状の主因や改善率は未確定。
+
+- 行の再生アイコンはelapsedを含む`QueueStore.nowPlaying`を読んでいた。曲IDが同じでもelapsed更新でObservationが無効化される。曲IDが変わった時だけ更新する`nowPlayingTrackID`を公開し、曲行はこの値を参照する。回帰testで再生位置12秒への更新によるこの値のObservation通知が0回、次の曲への切替時は1回であることを確認する。
+- 選択曲のdrag payloadを各行の構築時に生成していた。選択行ごとに全曲走査・UUID文字列生成が繰り返されるため、`onDrag`で実際のdrag開始時に生成する。ヘッダーの選択ID計算はbody内で1回だけ行い、未選択なら全曲走査を省略する。選択順は表示順を維持する。
+- Artwork cacheのhit確認より先にDB folder読込とsecurity-scoped bookmark解決が走っていた。cacheを先に確認し、hit時はこれらを省略する。画面外taskのcancelもfileアクセス前に確認する。cache上限は従来通り48件／24MiB。
+- `CachedArtwork.body`が評価されるたびに`NSImage(data:)`を生成していた。画像取得時に一度生成したNSImageをViewのStateに保持し、bodyで再利用する。
+
+実UIでは再生中／停止中、初回scroll／往復scroll、選択なし／複数選択で比較する。今回の自動testはscrollの滑らかさ自体を保証しない。

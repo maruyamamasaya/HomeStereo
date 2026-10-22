@@ -19,7 +19,13 @@ public actor ArtworkCache {
         self.maximumSourceBytes = maximumSourceBytes
     }
 
+    /// Allows callers to skip bookmark resolution and file access on a cache hit.
+    public func cachedData(for track: Track, pixelSize: Int = 256) -> Data? {
+        cache.object(forKey: "\(track.id.uuidString)-\(pixelSize)" as NSString).map { $0 as Data }
+    }
+
     public func data(for track: Track, fileURL: URL, pixelSize: Int = 256) async -> Data? {
+        guard !Task.isCancelled else { return nil }
         let key = "\(track.id.uuidString)-\(pixelSize)" as NSString
         if let cached = cache.object(forKey: key) { return cached as Data }
         if let embedded = track.artworkData {
@@ -27,6 +33,7 @@ public actor ArtworkCache {
         }
         let asset = AVURLAsset(url: fileURL)
         guard let metadata = try? await asset.load(.commonMetadata) else { return nil }
+        guard !Task.isCancelled else { return nil }
         for item in metadata where item.commonKey == .commonKeyArtwork {
             if let data = try? await item.load(.dataValue) {
                 return storeReduced(data, key: key, pixelSize: pixelSize)

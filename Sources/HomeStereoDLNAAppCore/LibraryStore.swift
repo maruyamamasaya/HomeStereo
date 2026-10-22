@@ -269,11 +269,14 @@ public final class LibraryStore {
     }
 
     public func artworkData(for track: Track, pixelSize: Int = 256) async -> Data? {
+        guard !Task.isCancelled else { return nil }
+        if let cached = await artworkCache.cachedData(for: track, pixelSize: pixelSize) { return cached }
+        guard !Task.isCancelled else { return nil }
         if track.artworkData != nil {
             return await artworkCache.data(for: track, fileURL: track.url, pixelSize: pixelSize)
         }
         do {
-            guard let persisted = try await repository.loadFolder(id: track.libraryFolderID) else { return nil }
+            guard let persisted = try await repository.loadFolder(id: track.libraryFolderID), !Task.isCancelled else { return nil }
             let resolution = try folderAccess.resolveBookmark(persisted.bookmarkData)
             guard folderAccess.beginAccessing(resolution.url) else { return nil }
             defer { folderAccess.stopAccessing(resolution.url) }

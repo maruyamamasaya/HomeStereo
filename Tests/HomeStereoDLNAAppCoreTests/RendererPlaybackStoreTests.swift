@@ -2,6 +2,7 @@ import Foundation
 import HomeStereoAppCore
 import HomeStereoKit
 import Testing
+import Observation
 @testable import HomeStereoDLNAAppCore
 
 @MainActor
@@ -945,6 +946,35 @@ import Testing
 }
 
 @MainActor
+@Test func queueInsertsAtBoundaryPreservingCurrentItemAndPersistsOrder() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("queue.sqlite3"))
+    let playback = RendererPlaybackStore(
+        discovery: FakeDiscovery(responses: []), descriptions: FakeDescriptions(renderer: sampleRenderer()),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController()
+    )
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(), repository: repository)
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    let ids = (0..<6).map { _ in UUID() }
+    await queue.append(trackIDs: Array(ids.prefix(3)))
+    let currentID = queue.items[0].id
+    await queue.insert(trackIDs: Array(ids[3...4]), at: 1)
+    #expect(queue.items.map(\.trackID) == [ids[0], ids[3], ids[4], ids[1], ids[2]])
+    await queue.insert(trackIDs: [ids[5]], at: 0)
+    #expect(queue.currentIndex == 1)
+    #expect(queue.items[1].id == currentID)
+    let restored = QueueStore(repository: repository, library: library, playback: playback)
+    await restored.restore()
+    #expect(restored.items == queue.items)
+    #expect(restored.currentIndex == 1)
+
+    await queue.insert(trackIDs: (0..<100).map { _ in UUID() }, at: Int.max)
+    #expect(queue.items.count == QueueStore.maximumItemCount)
+}
+
+@MainActor
 @Test func multipleQueueAndPlaylistSelectionDeletesOnlyReferences() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1101,12 +1131,25 @@ import Testing
     #expect(queue.items.map(\.trackID) == tracks[0...2].map(\.id))
     #expect(queue.currentIndex == 0)
     #expect(localPlayer.playCount == 1)
+    #expect(queue.nowPlayingTrackID == tracks[0].id)
+    let rowInvalidations = ObservationCounter()
+    withObservationTracking {
+        _ = queue.nowPlayingTrackID
+    } onChange: {
+        rowInvalidations.increment()
+    }
+    localPlayer.position = 12
+    await playback.refreshState()
+    #expect(queue.nowPlaying.elapsed == 12)
+    #expect(rowInvalidations.count == 0)
 
     await queue.playImmediately(trackID: tracks[3].id, source: .library)
     #expect(queue.items.map(\.trackID) == [tracks[0].id, tracks[3].id, tracks[1].id, tracks[2].id])
     #expect(queue.currentIndex == 1)
     #expect(localPlayer.playCount == 2)
     #expect(endReasons == [.directSelection])
+    #expect(queue.nowPlayingTrackID == tracks[3].id)
+    #expect(rowInvalidations.count == 1)
 
     await queue.pause()
     await queue.playImmediately(trackID: tracks[4].id, source: .library)
@@ -1559,6 +1602,8 @@ private final class CountingStereoPreparer: StereoMediaPreparing, @unchecked Sen
 
 @MainActor
 private final class FakeLocalAudioPlayer: LocalAudioPlaying {
+    var snapshot: LocalPlaybackSnapshot?
+    func playbackSnapshot() -> LocalPlaybackSnapshot? { snapshot }
     var onPlaybackEnded: (@MainActor () -> Void)?
     var onPlaybackFailure: (@MainActor (String) -> Void)?
     var loadedURL: URL?
@@ -1854,4 +1899,150 @@ private struct QueueSeededGenerator: RandomNumberGenerator {
         #expect(QueueCandidateSelection.select(ids, preferences: ten, limit: 100, using: &baseline)
             == QueueCandidateSelection.select(ids, preferences: higher, limit: 100, using: &expanded))
     }
+}
+
+private final class ObservationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func increment() { lock.withLock { value += 1 } }
+}
+
+@Test func artworkCacheLookupUsesRequestedSizeAndClears() async throws {
+    let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+    let track = Track(url: URL(fileURLWithPath: "/tmp/artwork-fixture.mp3"), title: "Fixture", artworkData: png)
+    let cache = ArtworkCache()
+    #expect(await cache.cachedData(for: track, pixelSize: 68) == nil)
+    let reduced = try #require(await cache.data(for: track, fileURL: track.url, pixelSize: 68))
+    #expect(await cache.cachedData(for: track, pixelSize: 68) == reduced)
+    #expect(await cache.cachedData(for: track, pixelSize: 336) == nil)
+    await cache.removeAll()
+    #expect(await cache.cachedData(for: track, pixelSize: 68) == nil)
+}
+
+
+@MainActor
+@Test func localMonitoringReportsWaitingRecoveryFailureAndKeepsDiagnosticsPrivate() async throws {
+    let player = FakeLocalAudioPlayer()
+    player.snapshot = LocalPlaybackSnapshot(itemState: .preparing, transportState: .waiting, waitReason: .evaluating)
+    let controller = FakeController()
+    let store = RendererPlaybackStore(discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: controller,
+        localPlayer: player, pollingInterval: .seconds(60))
+    defer { store.shutdown() }
+    #expect(store.selectLibraryFile(URL(fileURLWithPath: "/tmp/private-song-name.flac"), expectedDuration: 100, trackID: UUID()))
+    var finishes = 0
+    store.onTrackFinished = { finishes += 1 }
+    await store.play()
+    #expect(store.playbackState == .transitioning)
+    player.snapshot = LocalPlaybackSnapshot(itemState: .ready, transportState: .playing, position: 10)
+    await store.refreshState()
+    #expect(store.playbackState == .playing)
+    player.snapshot = LocalPlaybackSnapshot(itemState: .ready, transportState: .waiting,
+        waitReason: .buffering, bufferEmpty: true, likelyToKeepUp: false, position: 10, stallCount: 1)
+    await store.refreshState()
+    #expect(store.playbackState == .transitioning)
+    #expect(finishes == 0)
+    let firstReport = try store.diagnosticReportData()
+    await store.refreshState()
+    let object = try JSONSerialization.jsonObject(with: store.diagnosticReportData()) as! [String: Any]
+    let firstObject = try JSONSerialization.jsonObject(with: firstReport) as! [String: Any]
+    #expect((object["events"] as! [Any]).count == (firstObject["events"] as! [Any]).count)
+    player.snapshot = LocalPlaybackSnapshot(itemState: .ready, transportState: .playing, position: 11)
+    await store.refreshState()
+    #expect(store.playbackState == .playing)
+    await store.pause()
+    await store.refreshState() // A delayed playing observation must not undo explicit pause.
+    #expect(store.playbackState == .paused)
+    await store.stop()
+    await store.refreshState()
+    #expect(store.playbackState == .stopped)
+    await store.play()
+    player.snapshot = LocalPlaybackSnapshot(itemState: .failed, transportState: .paused, errorCode: -11800)
+    await store.refreshState()
+    #expect(store.playbackState == .stopped)
+    #expect(store.lastError != nil)
+    #expect(finishes == 0)
+    let report = String(decoding: try store.diagnosticReportData(), as: UTF8.self)
+    #expect(report.contains("buffering"))
+    #expect(report.contains("-11800"))
+    #expect(!report.contains("private-song-name"))
+    #expect(!report.contains("/tmp/"))
+    #expect(await controller.actions.isEmpty)
+}
+
+@Test func localProgressMonitorDetectsClockStallAndResetsAcrossWaiting() {
+    var monitor = LocalPlaybackProgressMonitor()
+    var snapshot = LocalPlaybackSnapshot(itemState: .ready, transportState: .playing, position: 5)
+    #expect(monitor.update(snapshot, uptime: 100) == nil)
+    #expect(monitor.update(snapshot, uptime: 102) == nil)
+    #expect(monitor.update(snapshot, uptime: 103) == true)
+    #expect(monitor.update(snapshot, uptime: 104) == nil)
+    snapshot.transportState = .waiting
+    #expect(monitor.update(snapshot, uptime: 110) == nil)
+    snapshot.transportState = .playing
+    snapshot.position = 6
+    #expect(monitor.update(snapshot, uptime: 111) == false)
+    monitor = LocalPlaybackProgressMonitor() // Explicit seek/pause creates a fresh baseline.
+    #expect(monitor.update(snapshot, uptime: 200) == nil)
+}
+
+
+@MainActor
+@Test func localObservationsCannotChangeDLNAPlayback() async throws {
+    let player = FakeLocalAudioPlayer()
+    player.snapshot = LocalPlaybackSnapshot(itemState: .failed, transportState: .waiting, waitReason: .buffering)
+    let controller = FakeController()
+    let store = RendererPlaybackStore(discovery: FakeDiscovery(responses: [sampleResponse()]),
+        descriptions: FakeDescriptions(renderer: sampleRenderer()),
+        fileSelection: FakeFileSelection(url: URL(fileURLWithPath: "/tmp/song.mp3")),
+        serverFactory: FakeServerFactory(), controller: controller, localPlayer: player,
+        pollingInterval: .seconds(60))
+    defer { store.shutdown() }
+    await store.discoverRenderers()
+    store.selectDevice(store.devices[0].id)
+    store.chooseFile()
+    await store.play()
+    await controller.setTransportState("PLAYING")
+    await store.refreshState()
+    player.onPlaybackFailure?("obsolete local failure")
+    player.finish()
+    #expect(store.playbackState == .playing)
+    #expect(store.lastError == nil)
+    #expect(!String(decoding: try store.diagnosticReportData(), as: UTF8.self).contains("localPlayback"))
+}
+
+@MainActor
+@Test func bufferingLocalQueueKeepsCurrentItemAndCanPauseWithoutReload() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repository = try SQLiteLibraryRepository(databaseURL: root.appendingPathComponent("queue.sqlite3"))
+    let folder = LibraryFolder(displayName: "Fixture", path: root.path)
+    try await repository.addFolder(folder, bookmarkData: Data("fixture".utf8))
+    let file = root.appendingPathComponent("song.mp3")
+    try Data().write(to: file)
+    let track = Track(libraryFolderID: folder.id, relativePath: "song.mp3", url: file, title: "Fixture", duration: 120)
+    try await repository.applySuccessfulScan(folderID: folder.id, tracks: [track], scannedAt: .now)
+    let player = FakeLocalAudioPlayer()
+    player.snapshot = LocalPlaybackSnapshot(itemState: .preparing, transportState: .waiting, waitReason: .evaluating)
+    let playback = RendererPlaybackStore(discovery: FakeDiscovery(responses: []), descriptions: FailingDescriptions(),
+        fileSelection: FakeFileSelection(), serverFactory: FakeServerFactory(), controller: FakeController(),
+        localPlayer: player, pollingInterval: .seconds(60))
+    let library = LibraryStore(scanner: NoopScanner(), folderAccess: QueueFolderAccess(root: root), repository: repository,
+        changeMonitor: NoopFolderChangeMonitor(), lifecycleMonitor: NoopSystemEventMonitor(), changeDebounce: .zero)
+    defer { playback.shutdown(); library.pauseMonitoring() }
+    await library.load()
+    let queue = QueueStore(repository: repository, library: library, playback: playback)
+    await queue.createFromCandidates(trackIDs: [track.id])
+    await queue.play()
+    #expect(playback.isLocalPlaybackPending)
+    #expect(queue.errorMessage == nil)
+    let itemID = queue.items[0].id
+    await queue.createFromCandidates(trackIDs: [track.id])
+    #expect(queue.items[0].id == itemID)
+    await queue.togglePlayback()
+    #expect(playback.playbackState == .paused)
+    #expect(player.playCount == 1)
+    #expect(player.pauseCount == 1)
 }
