@@ -143,10 +143,15 @@ struct DLNAContentView: View {
                 .homeStereoThemeBar()
             }
             }
-            .inspector(isPresented: inspectorPresentation) {
-                QueueView(playback: store, queue: queue, library: library)
-                    .homeStereoThemeScreen()
-                    .inspectorColumnWidth(min: 260, ideal: 340, max: 480)
+            .safeAreaInset(edge: .trailing, spacing: 0) {
+                if usesQueueInspector && queueInspectorVisible {
+                    HStack(spacing: 0) {
+                        Divider()
+                        QueueView(playback: store, queue: queue, library: library)
+                            .homeStereoThemeScreen()
+                            .frame(width: 320)
+                    }
+                }
             }
             .toolbar {
                 Button(queueButtonTitle, systemImage: queueButtonIcon) {
@@ -172,13 +177,6 @@ struct DLNAContentView: View {
             .onChange(of: window.size) { _, size in updateWindowLayout(for: size) }
         }
         .frame(minWidth: 760, minHeight: 460)
-    }
-
-    private var inspectorPresentation: Binding<Bool> {
-        Binding(
-            get: { usesQueueInspector && queueInspectorVisible },
-            set: { if usesQueueInspector { queueInspectorVisible = $0 } }
-        )
     }
 
     private var queueButtonTitle: String {

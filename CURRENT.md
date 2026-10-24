@@ -4,6 +4,10 @@ HomeStereoは、Mac上で選択した音源をLAN内DLNA RendererへHTTP配信�
 
 ## Current Phase
 
+2026-10-23: 特徴量UIを曲閲覧／解析・音量／JSON入出力へ整理。内容幅760pt未満は一覧と詳細を切替。右キューのAppKit inspectorをSwiftUI固定幅領域へ変更し、約960ptで再起動・特徴量読込を確認。Release `20261023110254`を正式配置し稼働processを確認。曲詳細操作はCUA接続断で正常表示を確認できず、詳細と連続resizeは未確認。補助アプリ終了はcontainer内AnalysisRunsへの書込でPermissionError errno 1を確認、権限は本人確認後にHomeStereoAnalyzerの「HomeStereo」アクセスをオンへ復旧。実解析23曲の保存を確認したが、検証86曲中63曲の個別失敗は原因未確定。詳細は[sessions/2026-10-23-feature-layout-crash.md](sessions/2026-10-23-feature-layout-crash.md)。
+
+2026-10-23: 音楽特徴量画面の制約更新ループによるクラッシュを実操作で再現。内側HSplitViewの置換だけでは再発したため、GeometryReaderで親から受けたviewport寸法へ画面を固定。Debug実UIで画面遷移、18,967件の読み込み完了、設定欄開閉を確認。Release build `20261023104701`を`/Applications/HomeStereo.app`へ反映・起動、署名・実行ファイルhash一致を確認。曲詳細操作はCUA接続断により確認未完了、狭いwindowも未検証。詳細は[sessions/2026-10-23-feature-layout-crash.md](sessions/2026-10-23-feature-layout-crash.md)。
+
 2026-10-23: AppIconを深いネイビーの背景・黒いレコード盤・アイボリーのトーンアームに更新。macOS用16〜1024px全10画像を差し替えた。専用scriptでRelease build `20261023034515`を`/Applications/HomeStereo.app`へ更新・起動。署名・実行ファイルSHA-256一致・正式pathのprocess起動を確認。
 
 2026-10-22: キュー挿入線の残留対策を含む現在の作業ツリーを専用scriptでRelease buildし、`/Applications/HomeStereo.app`へ更新・起動した（build `20261022133419`）。署名、build成果物との実行ファイルSHA-256一致、正式pathからのprocess起動を確認。実UIのdrag操作確認は未実施。
